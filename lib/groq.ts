@@ -1,4 +1,5 @@
 import Groq from "groq-sdk";
+import { HOME_CURRENCY, HOME_TIMEZONE } from "./thailand";
 
 let _client: Groq | null = null;
 function client(): Groq {
@@ -65,6 +66,12 @@ Return JSON with these fields:
 }
 
 ${email.recipientEmail ? `The recipient email address is: ${email.recipientEmail} — use this exactly for any email_used context.` : ""}
+
+Thailand-first context:
+- The user is most likely in Thailand. Prefer "${HOME_CURRENCY}" when the email uses ฿, baht, บาท, PromptPay, TrueMoney, Rabbit LINE Pay, K PLUS, SCB EASY, or other Thai payment wording.
+- Interpret Thai and English billing emails. Common Thai signals include ใบเสร็จ, ใบกำกับภาษี, ชำระเงิน, ชำระแล้ว, เรียกเก็บ, ต่ออายุ, สมัครสมาชิก, ค่าบริการ, and ยอดเงิน.
+- Use ${HOME_TIMEZONE} when reasoning about ambiguous local dates.
+- Thai telecom, delivery, shopping, bank, and wallet receipts can still represent recurring services when they mention plans, memberships, renewals, or repeated billing.
 
 Subject: ${email.subject}
 From: ${email.from}

@@ -2,6 +2,7 @@ import { gmailClient, listBillingMessageIds, getMessageMetadata, getMessageBody 
 import { shouldProcessEmail } from "./heuristic";
 import { extractEvent, type ExtractedEvent } from "./groq";
 import { supabaseAdmin } from "./supabase";
+import { THAILAND_BRANDS } from "./thailand";
 
 const SCAN_DAYS = 365;
 const EVENT_CONFIDENCE_THRESHOLD = 0.55;
@@ -58,6 +59,7 @@ const DOMAIN_TO_BRAND: Record<string, string> = {
   "figma.com": "Figma",
   "linear.app": "Linear",
   "vercel.com": "Vercel",
+  ...THAILAND_BRANDS,
 };
 
 function senderRootDomain(fromHeader: string): string {

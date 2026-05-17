@@ -1,10 +1,11 @@
 import { google, type gmail_v1 } from "googleapis";
 import { decrypt } from "./crypto";
+import { THAI_BILLING_TERMS } from "./thailand";
 
 const BILLING_SUBJECT_QUERY =
-  "subject:(receipt OR invoice OR \"payment successful\" OR \"payment failed\" OR \"payment due\" OR \"payment received\" OR \"you've been charged\" OR \"charge\" OR \"renewal\" OR \"subscription\" OR \"your plan\" OR \"order confirmation\")";
+  `subject:(receipt OR invoice OR "payment successful" OR "payment failed" OR "payment due" OR "payment received" OR "you've been charged" OR charge OR renewal OR subscription OR "your plan" OR "order confirmation" OR ${THAI_BILLING_TERMS.map((term) => `"${term}"`).join(" OR ")})`;
 const BILLING_FROM_QUERY =
-  `from:(billing OR invoice OR noreply OR payments OR receipts OR no-reply OR support OR hello OR accounts OR orders OR notifications OR receipt OR chargebee OR stripe OR paypal) OR ${BILLING_SUBJECT_QUERY}`;
+  `from:(billing OR invoice OR noreply OR payments OR receipts OR no-reply OR support OR hello OR accounts OR orders OR notifications OR receipt OR chargebee OR stripe OR paypal OR truemoney OR line OR grab OR shopee OR lazada OR ais OR true OR dtac OR kbank OR scb OR krungthai) OR ${BILLING_SUBJECT_QUERY}`;
 
 export function gmailClient(encryptedRefreshToken: string): gmail_v1.Gmail {
   const oauth2 = new google.auth.OAuth2(

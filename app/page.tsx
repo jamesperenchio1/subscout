@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { auth, signIn } from "@/lib/auth";
+import { APP_NAME, THAILAND_SCAN_NOTES } from "@/lib/thailand";
 import { redirect } from "next/navigation";
 
 export default async function Home() {
@@ -12,50 +13,84 @@ export default async function Home() {
   }
 
   return (
-    <div className="flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 dark:bg-black">
-      <main className="w-full max-w-xl space-y-10 py-24">
-        <div className="space-y-4 text-center">
-          <p className="inline-block rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium uppercase tracking-wider text-emerald-800">
-            SubScout
-          </p>
-          <h1 className="text-4xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50 sm:text-5xl">
-            Find every subscription hiding in your inbox.
-          </h1>
-          <p className="text-lg text-zinc-600 dark:text-zinc-400">
-            Connect Gmail. We scan the last 12 months of billing emails and build a live
-            dashboard of what you&apos;re actually paying for. Email content is never stored.
-          </p>
-        </div>
+    <div className="flex flex-1 flex-col bg-[#f7f4ee] text-stone-950">
+      <main className="mx-auto grid w-full max-w-6xl flex-1 items-center gap-10 px-5 py-10 sm:px-8 lg:grid-cols-[1fr_420px] lg:py-16">
+        <section className="space-y-8">
+          <div className="space-y-5">
+            <p className="inline-flex rounded-full border border-stone-300 bg-white/70 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-stone-700">
+              {APP_NAME}
+            </p>
+            <h1 className="max-w-3xl text-5xl font-semibold leading-[0.95] tracking-tight sm:text-6xl lg:text-7xl">
+              The subscription tracker that starts in your Thai inbox.
+            </h1>
+            <p className="max-w-2xl text-lg leading-8 text-stone-600">
+              Connect Gmail once. We read billing signals from Thai and international receipts,
+              convert the picture into THB-first subscription cards, and keep email content out of storage.
+            </p>
+          </div>
 
-        <form action={connect} className="flex flex-col items-center gap-3">
-          <button
-            type="submit"
-            className="inline-flex h-12 items-center justify-center gap-3 rounded-full bg-zinc-900 px-6 text-base font-medium text-white transition-colors hover:bg-zinc-700 dark:bg-white dark:text-black dark:hover:bg-zinc-200"
-          >
-            <GoogleMark />
-            Connect Gmail
-          </button>
-          <p className="text-xs text-zinc-500">
-            Read-only access. We only look at billing &amp; receipt emails.
-          </p>
-        </form>
+          <form action={connect} className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <button
+              type="submit"
+              className="inline-flex h-[52px] items-center justify-center gap-3 rounded-full bg-stone-950 px-6 text-base font-semibold text-white shadow-sm transition-colors hover:bg-stone-800"
+            >
+              <GoogleMark />
+              Connect Gmail
+            </button>
+            <p className="text-sm text-stone-600">
+              Read-only Gmail access. No raw email bodies are stored.
+            </p>
+          </form>
 
-        <ul className="grid grid-cols-1 gap-3 text-sm text-zinc-600 dark:text-zinc-400 sm:grid-cols-3">
-          <li className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
-            <span className="font-semibold text-zinc-900 dark:text-zinc-50">1.</span> Sign in with Google
-          </li>
-          <li className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
-            <span className="font-semibold text-zinc-900 dark:text-zinc-50">2.</span> We scan billing emails
-          </li>
-          <li className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
-            <span className="font-semibold text-zinc-900 dark:text-zinc-50">3.</span> See your subs &amp; spend
-          </li>
-        </ul>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Metric value="12 mo" label="Gmail scan window" />
+            <Metric value="THB" label="Default currency" />
+            <Metric value="BKK" label="Renewal timezone" />
+          </div>
+        </section>
 
-        <p className="text-center text-xs text-zinc-500">
-          <Link href="/privacy" className="underline-offset-2 hover:underline">Privacy</Link>
+        <aside className="rounded-[2rem] border border-stone-300 bg-white p-5 shadow-[0_24px_80px_rgba(28,25,23,0.12)]">
+          <div className="rounded-[1.5rem] bg-stone-950 p-5 text-white">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-medium text-stone-300">Discovery stack</p>
+              <span className="rounded-full bg-lime-300 px-2 py-1 text-xs font-bold text-stone-950">live</span>
+            </div>
+            <div className="mt-8 space-y-4">
+              {THAILAND_SCAN_NOTES.map((note, index) => (
+                <div key={note} className="flex gap-3">
+                  <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-white/10 text-xs font-semibold">
+                    {index + 1}
+                  </span>
+                  <p className="text-sm leading-6 text-stone-200">{note}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
+            <div className="rounded-2xl bg-[#f7f4ee] p-4">
+              <p className="text-stone-500">Evidence</p>
+              <p className="mt-1 font-semibold">Source emails attached</p>
+            </div>
+            <div className="rounded-2xl bg-lime-100 p-4">
+              <p className="text-stone-500">Confidence</p>
+              <p className="mt-1 font-semibold">Recurring patterns first</p>
+            </div>
+          </div>
+        </aside>
+
+        <p className="text-sm text-stone-500 lg:col-span-2">
+          <Link href="/privacy" className="underline-offset-4 hover:underline">Privacy</Link>
         </p>
       </main>
+    </div>
+  );
+}
+
+function Metric({ value, label }: { value: string; label: string }) {
+  return (
+    <div className="rounded-2xl border border-stone-300 bg-white/70 p-4">
+      <p className="text-2xl font-semibold tracking-tight">{value}</p>
+      <p className="mt-1 text-sm text-stone-600">{label}</p>
     </div>
   );
 }

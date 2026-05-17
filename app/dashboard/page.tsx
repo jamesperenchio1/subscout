@@ -5,6 +5,8 @@ import { encrypt } from "@/lib/crypto";
 import { SummaryStrip } from "@/components/summary-strip";
 import { SubscriptionCard } from "@/components/subscription-card";
 import { FirstScanPanel } from "@/components/first-scan-panel";
+import { formatMoney, monthlyAmount, daysUntil } from "@/lib/format";
+import { APP_NAME, HOME_CURRENCY } from "@/lib/thailand";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -18,7 +20,7 @@ export default async function Dashboard() {
 
   let { data: accounts } = await db
     .from("connected_accounts")
-    .select("id, user_id, google_email, google_refresh_token, last_scanned_at")
+    .select("id, user_id, google_email, google_refresh_token, last_scanned_at, emails_scanned_count, subs_found_count")
     .eq("user_id", userId);
 
   // Bootstrap connected_accounts from next_auth.accounts if missing
@@ -44,7 +46,7 @@ export default async function Dashboard() {
           },
           { onConflict: "user_id,google_email" },
         )
-        .select("id, user_id, google_email, google_refresh_token, last_scanned_at");
+        .select("id, user_id, google_email, google_refresh_token, last_scanned_at, emails_scanned_count, subs_found_count");
       accounts = created;
     }
   }
@@ -62,6 +64,24 @@ export default async function Dashboard() {
     .order("next_renewal_date", { ascending: true, nullsFirst: false });
 
   const subscriptions = subs ?? [];
+  const topCategories = Object.entries(
+    subscriptions.reduce<Record<string, { count: number; monthly: number }>>((acc, sub) => {
+      const category = sub.category ?? "other";
+      const currency = sub.currency ?? HOME_CURRENCY;
+      const monthly = currency === HOME_CURRENCY ? monthlyAmount(sub.amount, sub.billing_cycle) : 0;
+      acc[category] = {
+        count: (acc[category]?.count ?? 0) + 1,
+        monthly: (acc[category]?.monthly ?? 0) + monthly,
+      };
+      return acc;
+    }, {}),
+  )
+    .sort((a, b) => b[1].monthly - a[1].monthly || b[1].count - a[1].count)
+    .slice(0, 4);
+  const upcoming = subscriptions
+    .filter((sub) => sub.next_renewal_date)
+    .sort((a, b) => (a.next_renewal_date! < b.next_renewal_date! ? -1 : 1))
+    .slice(0, 4);
 
   async function disconnect() {
     "use server";
@@ -69,19 +89,19 @@ export default async function Dashboard() {
   }
 
   return (
-    <div className="flex flex-1 flex-col bg-zinc-50 dark:bg-black">
-      <header className="border-b border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="mx-auto flex w-full max-w-5xl items-center justify-between px-6 py-4">
+    <div className="flex flex-1 flex-col bg-[#f7f4ee] text-stone-950">
+      <header className="border-b border-stone-200 bg-white/80 backdrop-blur">
+        <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-4 px-5 py-4 sm:px-8">
           <div className="flex items-center gap-2">
-            <span className="text-lg font-semibold tracking-tight">SubScout</span>
-            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-emerald-800">
-              beta
+            <span className="text-lg font-semibold tracking-tight">{APP_NAME}</span>
+            <span className="rounded-full bg-lime-200 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-stone-950">
+              thai beta
             </span>
           </div>
-          <div className="flex items-center gap-3 text-sm text-zinc-600 dark:text-zinc-400">
-            <span>{session.user?.email}</span>
+          <div className="flex min-w-0 items-center gap-3 text-sm text-stone-600">
+            <span className="hidden truncate sm:inline">{session.user?.email}</span>
             <form action={disconnect}>
-              <button className="rounded-md border border-zinc-200 px-3 py-1 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900">
+              <button className="rounded-full border border-stone-300 px-3 py-1.5 font-medium hover:bg-stone-100">
                 Sign out
               </button>
             </form>
@@ -89,21 +109,94 @@ export default async function Dashboard() {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-5xl flex-1 space-y-8 px-6 py-10">
+      <main className="mx-auto w-full max-w-7xl flex-1 space-y-8 px-5 py-8 sm:px-8">
         {needsScan ? (
           <FirstScanPanel />
         ) : (
           <>
+            <section className="grid gap-4 lg:grid-cols-[1fr_360px]">
+              <div className="rounded-[2rem] bg-stone-950 p-6 text-white">
+                <p className="text-sm font-semibold uppercase tracking-[0.16em] text-lime-200">Inbox intelligence</p>
+                <h1 className="mt-4 max-w-3xl text-4xl font-semibold leading-tight tracking-tight sm:text-5xl">
+                  Your recurring spend, discovered from Gmail and organized for Thailand.
+                </h1>
+                <div className="mt-6 grid gap-3 sm:grid-cols-3">
+                  <Signal label="Connected inbox" value={account?.google_email ?? "Gmail"} />
+                  <Signal label="Emails scanned" value={String(account?.emails_scanned_count ?? 0)} />
+                  <Signal label="Last scan" value={account?.last_scanned_at ? new Date(account.last_scanned_at).toLocaleDateString("en-TH") : "Today"} />
+                </div>
+              </div>
+              <div className="rounded-[2rem] border border-stone-200 bg-white p-6">
+                <p className="text-sm font-semibold text-stone-500">Next up</p>
+                <div className="mt-4 space-y-3">
+                  {upcoming.length ? upcoming.map((sub) => (
+                    <div key={sub.id} className="flex items-center justify-between gap-3 rounded-2xl bg-stone-50 p-3">
+                      <div className="min-w-0">
+                        <p className="truncate font-semibold">{sub.service_name}</p>
+                        <p className="text-xs text-stone-500">
+                          {sub.next_renewal_date ? `${sub.next_renewal_date} · ${daysUntil(sub.next_renewal_date)}d` : "Unknown date"}
+                        </p>
+                      </div>
+                      <p className="shrink-0 text-sm font-semibold">{formatMoney(sub.amount ?? 0, sub.currency ?? HOME_CURRENCY)}</p>
+                    </div>
+                  )) : (
+                    <p className="text-sm text-stone-500">No upcoming dates found yet.</p>
+                  )}
+                </div>
+              </div>
+            </section>
+
             <SummaryStrip subscriptions={subscriptions} />
+            <section className="grid gap-4 lg:grid-cols-[280px_1fr]">
+              <aside className="space-y-4">
+                <div className="rounded-2xl border border-stone-200 bg-white p-5">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">Categories</p>
+                  <div className="mt-4 space-y-3">
+                    {topCategories.length ? topCategories.map(([category, data]) => (
+                      <div key={category}>
+                        <div className="flex justify-between text-sm">
+                          <span className="font-medium capitalize">{category}</span>
+                          <span className="text-stone-500">{data.count}</span>
+                        </div>
+                        <div className="mt-1 h-2 overflow-hidden rounded-full bg-stone-100">
+                          <div
+                            className="h-full rounded-full bg-lime-300"
+                            style={{ width: `${Math.max(12, Math.min(100, data.monthly))}%` }}
+                          />
+                        </div>
+                      </div>
+                    )) : (
+                      <p className="text-sm text-stone-500">Categories appear after scan.</p>
+                    )}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-stone-200 bg-white p-5">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">How discovery works</p>
+                  <p className="mt-3 text-sm leading-6 text-stone-600">
+                    We search likely billing mail, keep only billing-like candidates, extract events with AI, then require recurring evidence or a strong subscription confirmation.
+                  </p>
+                </div>
+              </aside>
+
+              <div>
+                <div className="mb-4 flex items-end justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-semibold text-stone-500">Subscriptions</p>
+                    <h2 className="text-2xl font-semibold tracking-tight">Discovered services</h2>
+                  </div>
+                  <p className="text-sm text-stone-500">{subscriptions.length} active</p>
+                </div>
             {subscriptions.length === 0 ? (
               <EmptyState />
             ) : (
-              <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
                 {subscriptions.map((s) => (
                   <SubscriptionCard key={s.id} sub={s} />
                 ))}
               </section>
             )}
+              </div>
+            </section>
           </>
         )}
       </main>
@@ -113,16 +206,25 @@ export default async function Dashboard() {
 
 function EmptyState() {
   return (
-    <div className="rounded-xl border border-dashed border-zinc-300 bg-white p-12 text-center dark:border-zinc-700 dark:bg-zinc-950">
+    <div className="rounded-2xl border border-dashed border-stone-300 bg-white p-12 text-center">
       <h2 className="text-lg font-semibold">No subscriptions found</h2>
-      <p className="mx-auto mt-2 max-w-md text-sm text-zinc-600 dark:text-zinc-400">
-        We didn&apos;t detect any active subscriptions in the last 12 months of billing emails.
+      <p className="mx-auto mt-2 max-w-md text-sm text-stone-600">
+        We didn&apos;t detect active subscriptions in the last 12 months of billing emails. Thai and English billing signals are included in the scan.
       </p>
       <form action="/dashboard">
-        <button className="mt-6 rounded-full bg-zinc-900 px-4 py-2 text-sm text-white dark:bg-white dark:text-black">
+        <button className="mt-6 rounded-full bg-stone-950 px-4 py-2 text-sm font-semibold text-white">
           Refresh
         </button>
       </form>
+    </div>
+  );
+}
+
+function Signal({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl bg-white/10 p-4">
+      <p className="text-xs font-medium text-stone-400">{label}</p>
+      <p className="mt-1 truncate text-lg font-semibold">{value}</p>
     </div>
   );
 }

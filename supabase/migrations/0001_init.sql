@@ -6,8 +6,8 @@
 -- Reference: https://authjs.dev/getting-started/adapters/supabase
 
 -- 1. Extend auth.js users with our app fields ---------------------------
-alter table next_auth.users add column if not exists home_currency text default 'USD';
-alter table next_auth.users add column if not exists timezone      text default 'UTC';
+alter table next_auth.users add column if not exists home_currency text default 'THB';
+alter table next_auth.users add column if not exists timezone      text default 'Asia/Bangkok';
 alter table next_auth.users add column if not exists plan          text default 'free';
 
 -- 2. App tables in the public schema -----------------------------------

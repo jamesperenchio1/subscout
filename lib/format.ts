@@ -1,3 +1,5 @@
+import { HOME_CURRENCY, HOME_LOCALE } from "./thailand";
+
 export function monthlyAmount(amount: number | null, cycle: string | null): number {
   if (!amount) return 0;
   switch (cycle) {
@@ -13,9 +15,9 @@ export function monthlyAmount(amount: number | null, cycle: string | null): numb
 
 export function formatMoney(amount: number, currency: string): string {
   try {
-    return new Intl.NumberFormat("en-US", {
+    return new Intl.NumberFormat(currency === "THB" ? HOME_LOCALE : "en-US", {
       style: "currency",
-      currency: currency || "USD",
+      currency: currency || HOME_CURRENCY,
       maximumFractionDigits: 2,
     }).format(amount);
   } catch {
