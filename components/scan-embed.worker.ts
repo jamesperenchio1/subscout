@@ -13,10 +13,11 @@ async function getExtractor(): Promise<FeatureExtractionPipeline> {
   if (!extractorPromise) {
     extractorPromise = (async () => {
       try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const webgpuExtractor = (await pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2", {
           device: "webgpu",
           quantized: true,
-        })) as FeatureExtractionPipeline;
+        } as any)) as FeatureExtractionPipeline;
         backend = "webgpu";
         return webgpuExtractor;
       } catch {
