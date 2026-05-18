@@ -43,16 +43,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (!refreshToken || !email) return true;
       try {
         const db = supabaseAdmin();
-        const { error } = await db.from("connected_accounts").upsert(
+        const { error } = await db.from("gmail_accounts").upsert(
           {
             user_id: user.id,
             google_email: email,
-            google_refresh_token: encrypt(refreshToken),
-            is_primary: true,
+            refresh_token_encrypted: encrypt(refreshToken),
           },
           { onConflict: "user_id,google_email" },
         );
-        if (error) console.error("connected_accounts upsert error:", error.message);
+        if (error) console.error("gmail_accounts upsert error:", error.message);
       } catch (err) {
         console.error("signIn callback error:", err);
       }

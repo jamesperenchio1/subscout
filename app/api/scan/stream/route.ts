@@ -1,7 +1,7 @@
 import { auth } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
 import { encrypt } from "@/lib/crypto";
-import { runInitialScan, type ScanEvent } from "@/lib/scan";
+import { runScan, type ScanEvent } from "@/lib/scan/orchestrator";
 
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
@@ -22,14 +22,18 @@ export async function GET() {
   const stream = new ReadableStream({
     async start(controller) {
       const send = (event: ScanEvent) => {
-        controller.enqueue(new TextEncoder().encode(sse(event)));
+        try {
+          controller.enqueue(new TextEncoder().encode(sse(event)));
+        } catch {
+          // Stream closed; swallow.
+        }
       };
 
       try {
-        // Get or bootstrap connected_accounts
+        // Get or bootstrap gmail_account
         let { data: accounts } = await db
-          .from("connected_accounts")
-          .select("id, user_id, google_email, google_refresh_token, last_scanned_at")
+          .from("gmail_accounts")
+          .select("id, user_id, google_email, refresh_token_encrypted")
           .eq("user_id", userId);
 
         if (!accounts?.length) {
@@ -49,44 +53,37 @@ export async function GET() {
 
           const email = session.user?.email ?? "";
           const { data: created } = await db
-            .from("connected_accounts")
+            .from("gmail_accounts")
             .upsert(
               {
                 user_id: userId,
                 google_email: email,
-                google_refresh_token: encrypt(oauthAccount.refresh_token),
-                is_primary: true,
+                refresh_token_encrypted: encrypt(oauthAccount.refresh_token),
               },
               { onConflict: "user_id,google_email" },
             )
-            .select("id, user_id, google_email, google_refresh_token, last_scanned_at");
+            .select("id, user_id, google_email, refresh_token_encrypted");
           accounts = created;
         }
 
         const account = accounts?.[0];
         if (!account) {
-          send({ type: "error", message: "Could not create connected account." });
+          send({ type: "error", message: "Could not create Gmail account record." });
           controller.close();
           return;
         }
 
-        // Reset scan watermark so it rescans
-        await db
-          .from("connected_accounts")
-          .update({ last_scanned_at: null })
-          .eq("id", account.id);
-
-        await runInitialScan(
+        await runScan(
           {
             id: account.id,
             user_id: account.user_id,
             google_email: account.google_email,
-            google_refresh_token: account.google_refresh_token,
+            google_refresh_token: account.refresh_token_encrypted,
           },
           send,
         );
       } catch (err) {
-        send({ type: "error", message: String(err) });
+        send({ type: "error", message: String(err).slice(0, 200) });
       } finally {
         controller.close();
       }

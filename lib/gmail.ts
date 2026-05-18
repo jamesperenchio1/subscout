@@ -89,7 +89,37 @@ function extractPlainText(payload: gmail_v1.Schema$MessagePart | undefined): str
   return "";
 }
 
-export async function getMessageBody(gmail: gmail_v1.Gmail, id: string): Promise<string> {
+export async function getMessageBody(gmail: gmail_v1.Gmail, id: string, maxChars = 5000): Promise<string> {
   const res = await gmail.users.messages.get({ userId: "me", id, format: "full" });
-  return extractPlainText(res.data.payload).slice(0, 4000);
+  return extractPlainText(res.data.payload).slice(0, maxChars);
+}
+
+export interface FullMessage extends MessageHeaders {
+  body: string;
+  internalDate: number;
+}
+
+export async function getFullMessage(gmail: gmail_v1.Gmail, id: string, maxBodyChars = 5000): Promise<FullMessage> {
+  const res = await gmail.users.messages.get({ userId: "me", id, format: "full" });
+  const headers = res.data.payload?.headers;
+  return {
+    id,
+    subject: headerValue(headers, "Subject"),
+    from: headerValue(headers, "From"),
+    date: headerValue(headers, "Date"),
+    snippet: res.data.snippet ?? "",
+    body: extractPlainText(res.data.payload).slice(0, maxBodyChars),
+    internalDate: Number(res.data.internalDate ?? 0),
+  };
+}
+
+// Parse "Name <addr@host>" or bare "addr@host" -> { email, domain }
+export function parseSender(from: string): { email: string; domain: string } {
+  const match = from.match(/<([^>]+)>/) ?? from.match(/([\w.+-]+@[\w.-]+)/);
+  const email = match?.[1]?.toLowerCase() ?? "";
+  const at = email.indexOf("@");
+  const fullDomain = at >= 0 ? email.slice(at + 1) : "";
+  const parts = fullDomain.split(".");
+  const rootDomain = parts.length >= 2 ? parts.slice(-2).join(".") : fullDomain;
+  return { email, domain: rootDomain };
 }

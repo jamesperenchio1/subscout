@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { ScanEvent } from "@/lib/scan";
+import type { ScanEvent } from "@/lib/scan/orchestrator";
 import { THAILAND_SCAN_NOTES } from "@/lib/thailand";
 
 interface LogLine {
@@ -34,37 +34,30 @@ export function FirstScanPanel() {
     es.onmessage = (e) => {
       const event = JSON.parse(e.data) as ScanEvent;
       switch (event.type) {
-        case "start":
-          addLog(`Fetched ${event.totalFetched} billing emails from Gmail`, "text-zinc-400");
+        case "stage":
+          addLog(event.message, "text-zinc-400");
           break;
-        case "filter":
-          addLog(`Heuristic filter: ${event.passed} passed, ${event.dropped} dropped`, "text-zinc-400");
-          setProgress({ current: 0, total: event.passed });
-          break;
-        case "processing":
+        case "progress":
           setProgress({ current: event.current, total: event.total });
-          break;
-        case "event_collected":
-          addLog(`[${event.eventType}] ${event.service} — ${event.subject}`, "text-sky-400");
-          break;
-        case "analyzing":
-          addLog(`Analyzing trends across ${event.services} candidate services…`, "text-yellow-400");
           break;
         case "found":
           setFound((n) => n + 1);
           addLog(
-            `✓ ${event.service}${event.amount != null ? ` · ${event.currency ?? ""}${event.amount}` : ""} · ${event.reason === "recurring" ? `${event.occurrences}× charges` : "subscription confirmed"}`,
+            `✓ ${event.service} [${event.status}] · ${event.amount != null ? `${event.currency ?? ""}${event.amount}` : "no amount"} · ${event.cycle ?? "unknown"} · ${event.evidence}`,
             "text-emerald-400",
           );
           break;
-        case "skipped":
-          addLog(`— ${event.subject.slice(0, 60)}`, "text-zinc-600");
+        case "summary":
+          addLog(
+            `Detected: ${event.confirmed} confirmed · ${event.possible} possible · ${event.trial} trial · ${event.canceled} canceled`,
+            "text-emerald-300",
+          );
           break;
         case "error":
           addLog(`Error: ${event.message}`, "text-red-400");
           break;
         case "done":
-          addLog(`Done — ${event.found} subscription${event.found !== 1 ? "s" : ""} found from ${event.scanned} emails`, "text-emerald-300");
+          addLog("Done — refreshing dashboard", "text-emerald-300");
           setDone(true);
           es.close();
           setTimeout(() => router.refresh(), 800);
