@@ -17,6 +17,7 @@ export function FirstScanPanel() {
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [done, setDone] = useState(false);
   const [error, setError] = useState(false);
+  const [attempt, setAttempt] = useState(1);
   const logRef = useRef<HTMLDivElement>(null);
   const esRef = useRef<EventSource | null>(null);
   const doneRef = useRef(false);
@@ -28,10 +29,11 @@ export function FirstScanPanel() {
   }
 
   useEffect(() => {
-    const es = new EventSource("/api/scan/stream");
+    const url = `/api/scan/stream?attempt=${attempt}&t=${Date.now()}`;
+    const es = new EventSource(url);
     esRef.current = es;
     es.onopen = () => {
-      addLog("Scan stream connected", "text-sky-300");
+      addLog(`Scan stream connected (attempt ${attempt})`, "text-sky-300");
       setError(false);
     };
 
@@ -75,13 +77,13 @@ export function FirstScanPanel() {
 
     es.onerror = () => {
       if (doneRef.current) return;
-      addLog(`Stream disconnected (readyState=${es.readyState}) — click Retry to resume`, "text-red-400");
+      addLog(`Stream disconnected (attempt ${attempt}, readyState=${es.readyState}) — click Retry to resume`, "text-red-400");
       setError(true);
       es.close();
     };
 
     return () => es.close();
-  }, [router]);
+  }, [attempt, router]);
 
   const pct = progress.total > 0 ? Math.round((progress.current / progress.total) * 100) : 0;
 
@@ -154,12 +156,19 @@ export function FirstScanPanel() {
         </div>
 
         {error && (
-          <button
-            onClick={() => window.location.reload()}
-            className="rounded-full border border-stone-300 bg-white px-4 py-2 text-sm font-semibold hover:bg-stone-50"
-          >
-            Retry scan
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => {
+                esRef.current?.close();
+                setError(false);
+                setAttempt((n) => n + 1);
+              }}
+              className="rounded-full border border-stone-300 bg-white px-4 py-2 text-sm font-semibold hover:bg-stone-50"
+            >
+              Retry scan
+            </button>
+            <p className="text-xs text-stone-500">Attempt {attempt}</p>
+          </div>
         )}
       </div>
     </div>

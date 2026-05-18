@@ -10,12 +10,14 @@ function sse(event: ScanEvent): string {
   return `data: ${JSON.stringify(event)}\n\n`;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const url = new URL(request.url);
+    const attempt = url.searchParams.get("attempt");
     const requestId =
       globalThis.crypto?.randomUUID?.() ??
       `req_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-    console.log("[scan:stream] incoming request", { requestId });
+    console.log("[scan:stream] incoming request", { requestId, attempt });
     const session = await auth();
     const userId = (session?.user as { id?: string } | undefined)?.id;
     if (!session || !userId) {
@@ -170,10 +172,11 @@ export async function GET() {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
       },
     });
   } catch (err) {
-    console.error("[scan:stream] GET fatal", { error: String(err) });
+    console.error("[scan:stream] GET fatal", { error: String(err), stack: err instanceof Error ? err.stack : undefined });
     return new Response(`Stream init failed: ${String(err).slice(0, 400)}`, { status: 500 });
   }
 }
