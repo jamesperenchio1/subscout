@@ -1,5 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase";
-import { toPgVector } from "./embed";
+import { toPgVector } from "./vector";
 import { randomUUID } from "crypto";
 
 const SIMILARITY_THRESHOLD = 0.85;

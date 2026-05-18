@@ -1,7 +1,6 @@
 import { gmailClient, listBillingMessageIds, getFullMessage, parseSender, type FullMessage } from "@/lib/gmail";
 import { shouldProcessEmail } from "@/lib/heuristic";
 import { supabaseAdmin } from "@/lib/supabase";
-import { embed, toPgVector } from "./embed";
 import { clusterPendingEvents } from "./cluster";
 import { classifyClusters } from "./classify";
 import { enrichUnresolvedEvents } from "./enrich";
@@ -18,6 +17,12 @@ export type ScanEvent =
   | { type: "error"; message: string }
   | { type: "done" };
 
+export interface IngestResult {
+  ingested: number;
+  pendingEmbeddings: number;
+  scannedThroughDate: string;
+}
+
 export interface AccountRow {
   id: string;
   user_id: string;
@@ -25,10 +30,17 @@ export interface AccountRow {
   google_refresh_token: string;
 }
 
+export function buildEmbeddingText(subject: string | null, body: string | null): string {
+  return `${subject ?? ""}\n${(body ?? "").slice(0, 800)}`
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 2000);
+}
+
 export async function runScan(
   account: AccountRow,
   emit?: (event: ScanEvent) => void,
-): Promise<void> {
+): Promise<IngestResult> {
   const log = emit ?? (() => {});
   const db = supabaseAdmin();
   const gmail = gmailClient(account.google_refresh_token);
@@ -73,9 +85,9 @@ export async function runScan(
 
   log({ type: "stage", stage: "filter", message: `${newIds.length} new emails to ingest (${ids.length - newIds.length} already seen)` });
 
-  // Pull metadata + body, heuristic, embed, insert
+  // Pull metadata + body, heuristic, insert (embedding happens client-side)
   let processed = 0;
-  let kept = 0;
+  let ingested = 0;
   for (const id of newIds) {
     log({ type: "verbose", stage: "ingest", message: "Fetching message payload", data: { messageId: id } });
     let full: FullMessage;
@@ -115,16 +127,6 @@ export async function runScan(
       data: { messageId: id, senderEmail, senderDomain },
     });
 
-    // Embed (subject + first 800 of body gives best clustering signal)
-    let embedding: number[];
-    try {
-      embedding = await embed(`${full.subject}\n${full.body.slice(0, 800)}`);
-    } catch (err) {
-      log({ type: "error", message: `Embed failed for ${id}: ${String(err).slice(0, 80)}` });
-      continue;
-    }
-    log({ type: "verbose", stage: "embed", message: "Embedding generated", data: { messageId: id, dimensions: embedding.length } });
-
     const sentAt = full.internalDate ? new Date(full.internalDate).toISOString() : null;
     const { error: insertErr } = await db.from("email_events").insert({
       user_id: account.user_id,
@@ -134,18 +136,64 @@ export async function runScan(
       sender_email: senderEmail,
       sender_domain: senderDomain,
       sent_at: sentAt,
-      embedding: toPgVector(embedding),
       raw_extract: { body: full.body, snippet: full.snippet },
     });
     if (!insertErr) {
-      kept++;
+      ingested++;
       log({ type: "verbose", stage: "persist", message: "Inserted email_event", data: { messageId: id, sentAt, senderEmail, senderDomain } });
     } else {
       log({ type: "verbose", stage: "persist", message: "Insert failed", data: { messageId: id, error: insertErr.message } });
     }
   }
 
-  log({ type: "stage", stage: "filter", message: `${kept} emails embedded and stored` });
+  log({ type: "stage", stage: "filter", message: `${ingested} emails stored for client embedding` });
+  log({
+    type: "stage",
+    stage: "embed-client-init",
+    message: "Preparing browser embeddings (WebGPU with WASM fallback)…",
+  });
+  log({
+    type: "verbose",
+    stage: "embed-client-init",
+    message: "Server ingest complete; awaiting client-side embeddings",
+    data: { ingested },
+  });
+
+  const scannedThroughDate = since.toISOString().slice(0, 10);
+  await db
+    .from("gmail_accounts")
+    .update({
+      scanned_through_date: scannedThroughDate,
+    })
+    .eq("id", account.id);
+
+  const { count: pendingEmbeddings } = await db
+    .from("email_events")
+    .select("*", { count: "exact", head: true })
+    .eq("user_id", account.user_id)
+    .eq("gmail_account_id", account.id)
+    .is("embedding", null);
+
+  log({
+    type: "verbose",
+    stage: "scan",
+    message: "Updated gmail account watermark",
+    data: { accountId: account.id, scannedThroughDate },
+  });
+  log({ type: "done" });
+
+  return {
+    ingested,
+    pendingEmbeddings: pendingEmbeddings ?? 0,
+    scannedThroughDate,
+  };
+}
+
+export async function finalizeScanAfterEmbeddings(
+  account: Pick<AccountRow, "user_id" | "google_email">,
+  emit?: (event: ScanEvent) => void,
+): Promise<{ confirmed: number; possible: number; canceled: number; trial: number }> {
+  const log = emit ?? (() => {});
 
   // Cluster
   log({ type: "stage", stage: "cluster", message: "Clustering near-duplicate emails…" });
@@ -167,22 +215,13 @@ export async function runScan(
   // Trend detection
   log({ type: "stage", stage: "trend", message: "Running pattern detection…" });
   const result = await detectSubscriptions(account.user_id);
-  log({ type: "verbose", stage: "trend", message: "Trend detection result", data: result });
-  log({ type: "summary", confirmed: result.confirmed, possible: result.possible, canceled: result.canceled, trial: result.trial });
-
-  // Update gmail_account watermark
-  await db
-    .from("gmail_accounts")
-    .update({
-      scanned_through_date: since.toISOString().slice(0, 10),
-    })
-    .eq("id", account.id);
   log({
-    type: "verbose",
-    stage: "scan",
-    message: "Updated gmail account watermark",
-    data: { accountId: account.id, scannedThroughDate: since.toISOString().slice(0, 10) },
+    type: "summary",
+    confirmed: result.confirmed,
+    possible: result.possible,
+    canceled: result.canceled,
+    trial: result.trial,
   });
-
-  log({ type: "done" });
+  log({ type: "verbose", stage: "trend", message: "Trend detection result", data: result });
+  return result;
 }

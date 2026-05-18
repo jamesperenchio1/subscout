@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { ScanEvent } from "@/lib/scan/orchestrator";
 
@@ -20,13 +20,110 @@ export function FirstScanPanel() {
   const [attempt, setAttempt] = useState(1);
   const logRef = useRef<HTMLDivElement>(null);
   const esRef = useRef<EventSource | null>(null);
+  const workerRef = useRef<Worker | null>(null);
   const doneRef = useRef(false);
+  const embeddingStartedRef = useRef(false);
 
   function addLog(text: string, color = "text-zinc-300") {
     const ts = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
     setLogs((prev) => [...prev, { ts, text, color }]);
     setTimeout(() => logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: "smooth" }), 30);
   }
+
+  const getWorker = useCallback((): Worker => {
+    if (!workerRef.current) {
+      workerRef.current = new Worker(new URL("./scan-embed.worker.ts", import.meta.url), { type: "module" });
+    }
+    return workerRef.current;
+  }, []);
+
+  const workerRequest = useCallback(<TResponse,>(message: unknown, expectedType: string): Promise<TResponse> => {
+    const worker = getWorker();
+    return new Promise((resolve, reject) => {
+      const onMessage = (event: MessageEvent) => {
+        const data = event.data as { type?: string; message?: string };
+        if (!data?.type) return;
+        if (data.type === "error") {
+          worker.removeEventListener("message", onMessage);
+          reject(new Error(data.message ?? "Worker error"));
+          return;
+        }
+        if (data.type === expectedType) {
+          worker.removeEventListener("message", onMessage);
+          resolve(event.data as TResponse);
+        }
+      };
+      worker.addEventListener("message", onMessage);
+      worker.postMessage(message);
+    });
+  }, [getWorker]);
+
+  const runClientEmbeddingFlow = useCallback(async () => {
+    if (embeddingStartedRef.current) return;
+    embeddingStartedRef.current = true;
+    try {
+      addLog("[embed-client-init] Initializing browser embedding runtime…", "text-sky-300");
+      const ready = await workerRequest<{ type: "ready"; backend: string; dtype: string }>({ type: "init" }, "ready");
+      addLog(`[embed-client-init] embedding_mode=${ready.backend} dtype=${ready.dtype}`, "text-sky-300");
+
+      let embedded = 0;
+      while (true) {
+        const candidatesRes = await fetch("/api/scan/embed-candidates", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ limit: 10 }),
+        });
+        if (!candidatesRes.ok) throw new Error(`embed-candidates failed: ${candidatesRes.status}`);
+        const candidatesData = (await candidatesRes.json()) as {
+          candidates: Array<{ event_id: string; text: string }>;
+        };
+        if (!candidatesData.candidates.length) break;
+
+        addLog(
+          `[embed-client-progress] Processing ${candidatesData.candidates.length} candidates locally…`,
+          "text-sky-300",
+        );
+        const embeddedBatch = await workerRequest<{
+          type: "embedded";
+          vectors: Array<{ event_id: string; embedding: number[] }>;
+          backend: string;
+          dtype: string;
+        }>({ type: "embed", items: candidatesData.candidates }, "embedded");
+
+        const resultsRes = await fetch("/api/scan/embed-results", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ results: embeddedBatch.vectors }),
+        });
+        if (!resultsRes.ok) throw new Error(`embed-results failed: ${resultsRes.status}`);
+
+        embedded += embeddedBatch.vectors.length;
+        addLog(
+          `[embed-client-progress] Persisted ${embeddedBatch.vectors.length} embeddings (total ${embedded})`,
+          "text-sky-300",
+        );
+      }
+
+      addLog("[embed-client-complete] Client embeddings complete. Finalizing scan…", "text-sky-300");
+      const finalizeRes = await fetch("/api/scan/finalize", { method: "POST" });
+      if (!finalizeRes.ok) throw new Error(`finalize failed: ${finalizeRes.status}`);
+      const finalizeData = (await finalizeRes.json()) as {
+        result: { confirmed: number; possible: number; canceled: number; trial: number };
+      };
+      addLog(
+        `Detected: ${finalizeData.result.confirmed} confirmed · ${finalizeData.result.possible} possible · ${finalizeData.result.trial} trial · ${finalizeData.result.canceled} canceled`,
+        "text-emerald-300",
+      );
+      doneRef.current = true;
+      setDone(true);
+      addLog("Done — refreshing dashboard", "text-emerald-300");
+      setTimeout(() => router.refresh(), 800);
+    } catch (err) {
+      addLog(`Error: ${String(err)}`, "text-red-400");
+      setError(true);
+      embeddingStartedRef.current = false;
+    }
+  }, [router, workerRequest]);
 
   useEffect(() => {
     const url = `/api/scan/stream?attempt=${attempt}&t=${Date.now()}`;
@@ -66,11 +163,8 @@ export function FirstScanPanel() {
           addLog(`Error: ${event.message}`, "text-red-400");
           break;
         case "done":
-          doneRef.current = true;
-          addLog("Done — refreshing dashboard", "text-emerald-300");
-          setDone(true);
           es.close();
-          setTimeout(() => router.refresh(), 800);
+          void runClientEmbeddingFlow();
           break;
       }
     };
@@ -83,7 +177,14 @@ export function FirstScanPanel() {
     };
 
     return () => es.close();
-  }, [attempt, router]);
+  }, [attempt, router, runClientEmbeddingFlow]);
+
+  useEffect(() => {
+    return () => {
+      workerRef.current?.terminate();
+      workerRef.current = null;
+    };
+  }, []);
 
   const pct = progress.total > 0 ? Math.round((progress.current / progress.total) * 100) : 0;
 
@@ -160,6 +261,12 @@ export function FirstScanPanel() {
             <button
               onClick={() => {
                 esRef.current?.close();
+                embeddingStartedRef.current = false;
+                doneRef.current = false;
+                setDone(false);
+                setProgress({ current: 0, total: 0 });
+                setFound(0);
+                setLogs([]);
                 setError(false);
                 setAttempt((n) => n + 1);
               }}
