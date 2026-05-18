@@ -30,6 +30,10 @@ export function FirstScanPanel() {
   useEffect(() => {
     const es = new EventSource("/api/scan/stream");
     esRef.current = es;
+    es.onopen = () => {
+      addLog("Scan stream connected", "text-sky-300");
+      setError(false);
+    };
 
     es.onmessage = (e) => {
       const event = JSON.parse(e.data) as ScanEvent;
@@ -53,6 +57,9 @@ export function FirstScanPanel() {
             "text-emerald-300",
           );
           break;
+        case "verbose":
+          addLog(`[${event.stage}] ${event.message}${event.data ? ` :: ${JSON.stringify(event.data)}` : ""}`, "text-sky-300");
+          break;
         case "error":
           addLog(`Error: ${event.message}`, "text-red-400");
           break;
@@ -68,7 +75,7 @@ export function FirstScanPanel() {
 
     es.onerror = () => {
       if (doneRef.current) return;
-      addLog("Stream disconnected — click Retry to resume", "text-red-400");
+      addLog(`Stream disconnected (readyState=${es.readyState}) — click Retry to resume`, "text-red-400");
       setError(true);
       es.close();
     };

@@ -11,30 +11,65 @@ function sse(event: ScanEvent): string {
 }
 
 export async function GET() {
+  const requestId = crypto.randomUUID();
+  console.log("[scan:stream] incoming request", { requestId });
   const session = await auth();
   const userId = (session?.user as { id?: string } | undefined)?.id;
   if (!session || !userId) {
+    console.warn("[scan:stream] unauthorized request", { requestId, hasSession: Boolean(session), userId: userId ?? null });
     return new Response("Unauthorized", { status: 401 });
   }
+  console.log("[scan:stream] authenticated request", {
+    requestId,
+    userId,
+    sessionEmail: session.user?.email ?? null,
+    sessionName: session.user?.name ?? null,
+    sessionImage: session.user?.image ?? null,
+  });
 
   const db = supabaseAdmin();
 
   const stream = new ReadableStream({
     async start(controller) {
+      let closed = false;
+      let heartbeat: ReturnType<typeof setInterval> | null = null;
       const send = (event: ScanEvent) => {
         try {
+          if (closed) return;
+          console.log("[scan:stream] emit", { requestId, eventType: event.type, event });
           controller.enqueue(new TextEncoder().encode(sse(event)));
-        } catch {
-          // Stream closed; swallow.
+        } catch (err) {
+          console.warn("[scan:stream] enqueue failed", { requestId, error: String(err) });
         }
       };
 
       try {
+        send({
+          type: "verbose",
+          stage: "stream",
+          message: "SSE stream opened",
+          data: { requestId, userId, sessionEmail: session.user?.email ?? null },
+        });
+        heartbeat = setInterval(() => {
+          send({
+            type: "verbose",
+            stage: "stream",
+            message: "SSE heartbeat",
+            data: { requestId, ts: new Date().toISOString() },
+          });
+        }, 5000);
+
         // Get or bootstrap gmail_account
         let { data: accounts } = await db
           .from("gmail_accounts")
           .select("id, user_id, google_email, refresh_token_encrypted")
           .eq("user_id", userId);
+        send({
+          type: "verbose",
+          stage: "account",
+          message: "Loaded gmail_accounts rows",
+          data: { requestId, count: accounts?.length ?? 0, accounts: accounts?.map((a) => ({ id: a.id, user_id: a.user_id, google_email: a.google_email })) ?? [] },
+        });
 
         if (!accounts?.length) {
           const { data: oauthAccount } = await db
@@ -44,10 +79,21 @@ export async function GET() {
             .eq("userId", userId)
             .eq("provider", "google")
             .maybeSingle();
+          send({
+            type: "verbose",
+            stage: "account",
+            message: "Loaded OAuth account row",
+            data: {
+              requestId,
+              providerAccountId: oauthAccount?.providerAccountId ?? null,
+              hasRefreshToken: Boolean(oauthAccount?.refresh_token),
+            },
+          });
 
           if (!oauthAccount?.refresh_token) {
             send({ type: "error", message: "No Google account linked. Please sign in again." });
             controller.close();
+            closed = true;
             return;
           }
 
@@ -64,14 +110,27 @@ export async function GET() {
             )
             .select("id, user_id, google_email, refresh_token_encrypted");
           accounts = created;
+          send({
+            type: "verbose",
+            stage: "account",
+            message: "Bootstrapped gmail_account row",
+            data: { requestId, count: accounts?.length ?? 0, accounts: accounts?.map((a) => ({ id: a.id, user_id: a.user_id, google_email: a.google_email })) ?? [] },
+          });
         }
 
         const account = accounts?.[0];
         if (!account) {
           send({ type: "error", message: "Could not create Gmail account record." });
           controller.close();
+          closed = true;
           return;
         }
+        send({
+          type: "verbose",
+          stage: "account",
+          message: "Selected gmail account for scan",
+          data: { requestId, accountId: account.id, userId: account.user_id, googleEmail: account.google_email },
+        });
 
         await runScan(
           {
@@ -83,8 +142,17 @@ export async function GET() {
           send,
         );
       } catch (err) {
+        console.error("[scan:stream] uncaught stream error", { requestId, error: String(err) });
         send({ type: "error", message: String(err).slice(0, 200) });
       } finally {
+        if (heartbeat) clearInterval(heartbeat);
+        send({
+          type: "verbose",
+          stage: "stream",
+          message: "SSE stream closing",
+          data: { requestId },
+        });
+        closed = true;
         controller.close();
       }
     },
