@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { auth, signIn } from "@/lib/auth";
-import { APP_NAME, THAILAND_SCAN_NOTES } from "@/lib/thailand";
 import { redirect } from "next/navigation";
 
 export default async function Home() {
@@ -18,14 +17,13 @@ export default async function Home() {
         <section className="space-y-8">
           <div className="space-y-5">
             <p className="inline-flex rounded-full border border-stone-300 bg-white/70 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-stone-700">
-              {APP_NAME}
+              SubScout
             </p>
             <h1 className="max-w-3xl text-5xl font-semibold leading-[0.95] tracking-tight sm:text-6xl lg:text-7xl">
-              The subscription tracker that starts in your Thai inbox.
+              Find every subscription hiding in your inbox.
             </h1>
             <p className="max-w-2xl text-lg leading-8 text-stone-600">
-              Connect Gmail once. We read billing signals from Thai and international receipts,
-              convert the picture into THB-first subscription cards, and keep email content out of storage.
+              Connect Gmail once. AI reads every billing signal — receipts, renewals, and charges in any language or currency — and surfaces your active subscriptions without storing raw email content.
             </p>
           </div>
 
@@ -43,9 +41,9 @@ export default async function Home() {
           </form>
 
           <div className="grid gap-3 sm:grid-cols-3">
-            <Metric value="12 mo" label="Gmail scan window" />
-            <Metric value="THB" label="Default currency" />
-            <Metric value="BKK" label="Renewal timezone" />
+            <Metric value="2 yr" label="Gmail scan window" />
+            <Metric value="AI" label="Powered detection" />
+            <Metric value="0" label="Raw emails stored" />
           </div>
         </section>
 
@@ -56,7 +54,12 @@ export default async function Home() {
               <span className="rounded-full bg-lime-300 px-2 py-1 text-xs font-bold text-stone-950">live</span>
             </div>
             <div className="mt-8 space-y-4">
-              {THAILAND_SCAN_NOTES.map((note, index) => (
+              {[
+                "Reads receipts and renewals in any language",
+                "Detects recurring charge patterns across 2 years",
+                "Groups variants of the same service into one card",
+                "Flags trials, failed payments, and cancellations",
+              ].map((note, index) => (
                 <div key={note} className="flex gap-3">
                   <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-white/10 text-xs font-semibold">
                     {index + 1}
