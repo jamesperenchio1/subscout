@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { ScanEvent } from "@/lib/scan/orchestrator";
-import { THAILAND_SCAN_NOTES } from "@/lib/thailand";
 
 interface LogLine {
   ts: string;
@@ -20,6 +19,7 @@ export function FirstScanPanel() {
   const [error, setError] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
   const esRef = useRef<EventSource | null>(null);
+  const doneRef = useRef(false);
 
   function addLog(text: string, color = "text-zinc-300") {
     const ts = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -57,6 +57,7 @@ export function FirstScanPanel() {
           addLog(`Error: ${event.message}`, "text-red-400");
           break;
         case "done":
+          doneRef.current = true;
           addLog("Done — refreshing dashboard", "text-emerald-300");
           setDone(true);
           es.close();
@@ -66,7 +67,8 @@ export function FirstScanPanel() {
     };
 
     es.onerror = () => {
-      addLog("Stream disconnected", "text-red-400");
+      if (doneRef.current) return;
+      addLog("Stream disconnected — click Retry to resume", "text-red-400");
       setError(true);
       es.close();
     };
@@ -87,9 +89,14 @@ export function FirstScanPanel() {
           </p>
         </div>
         <div className="rounded-2xl bg-stone-950 p-5 text-white">
-          <p className="text-sm font-semibold text-lime-200">Thailand checks</p>
+          <p className="text-sm font-semibold text-lime-200">What we scan</p>
           <ul className="mt-4 space-y-3">
-            {THAILAND_SCAN_NOTES.map((note) => (
+            {[
+              "Billing receipts and renewal emails",
+              "Charges in any language or currency",
+              "2 years of inbox history",
+              "Recurring patterns only — no one-offs",
+            ].map((note) => (
               <li key={note} className="text-sm text-stone-300">{note}</li>
             ))}
           </ul>

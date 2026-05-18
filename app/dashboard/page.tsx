@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth, signOut } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -6,7 +7,7 @@ import { SubscriptionCard } from "@/components/subscription-card";
 import { FirstScanPanel } from "@/components/first-scan-panel";
 import { PossibleSubsSection } from "@/components/dashboard/possible-subs-section";
 import { formatMoney, monthlyAmount, daysUntil } from "@/lib/format";
-import { APP_NAME, HOME_CURRENCY } from "@/lib/thailand";
+import { HOME_CURRENCY } from "@/lib/thailand";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -102,10 +103,7 @@ export default async function Dashboard() {
       <header className="border-b border-stone-200 bg-white/80 backdrop-blur">
         <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-4 px-5 py-4 sm:px-8">
           <div className="flex items-center gap-2">
-            <span className="text-lg font-semibold tracking-tight">{APP_NAME}</span>
-            <span className="rounded-full bg-lime-200 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-stone-950">
-              thai beta
-            </span>
+            <span className="text-lg font-semibold tracking-tight">SubScout</span>
           </div>
           <div className="flex min-w-0 items-center gap-3 text-sm text-stone-600">
             <span className="hidden truncate sm:inline">{session.user?.email}</span>
@@ -198,7 +196,12 @@ export default async function Dashboard() {
                     <p className="text-sm font-semibold text-stone-500">Confirmed subscriptions</p>
                     <h2 className="text-2xl font-semibold tracking-tight">Recurring spend</h2>
                   </div>
-                  <p className="text-sm text-stone-500">{active.length} active</p>
+                  <Link
+                    href="/subscriptions"
+                    className="text-sm font-semibold text-stone-700 underline-offset-2 hover:underline"
+                  >
+                    View all →
+                  </Link>
                 </div>
                 {active.length === 0 ? (
                   <EmptyState />
