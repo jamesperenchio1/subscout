@@ -11,53 +11,65 @@ function sse(event: ScanEvent): string {
 }
 
 export async function GET() {
-  const requestId = crypto.randomUUID();
-  console.log("[scan:stream] incoming request", { requestId });
-  const session = await auth();
-  const userId = (session?.user as { id?: string } | undefined)?.id;
-  if (!session || !userId) {
-    console.warn("[scan:stream] unauthorized request", { requestId, hasSession: Boolean(session), userId: userId ?? null });
-    return new Response("Unauthorized", { status: 401 });
-  }
-  console.log("[scan:stream] authenticated request", {
-    requestId,
-    userId,
-    sessionEmail: session.user?.email ?? null,
-    sessionName: session.user?.name ?? null,
-    sessionImage: session.user?.image ?? null,
-  });
+  try {
+    const requestId =
+      globalThis.crypto?.randomUUID?.() ??
+      `req_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    console.log("[scan:stream] incoming request", { requestId });
+    const session = await auth();
+    const userId = (session?.user as { id?: string } | undefined)?.id;
+    if (!session || !userId) {
+      console.warn("[scan:stream] unauthorized request", { requestId, hasSession: Boolean(session), userId: userId ?? null });
+      return new Response("Unauthorized", { status: 401 });
+    }
+    console.log("[scan:stream] authenticated request", {
+      requestId,
+      userId,
+      sessionEmail: session.user?.email ?? null,
+      sessionName: session.user?.name ?? null,
+      sessionImage: session.user?.image ?? null,
+    });
 
-  const db = supabaseAdmin();
+    const db = supabaseAdmin();
 
-  const stream = new ReadableStream({
-    async start(controller) {
-      let closed = false;
-      let heartbeat: ReturnType<typeof setInterval> | null = null;
-      const send = (event: ScanEvent) => {
-        try {
+    const stream = new ReadableStream({
+      async start(controller) {
+        let closed = false;
+        let heartbeat: ReturnType<typeof setInterval> | null = null;
+        const safeClose = () => {
           if (closed) return;
-          console.log("[scan:stream] emit", { requestId, eventType: event.type, event });
-          controller.enqueue(new TextEncoder().encode(sse(event)));
-        } catch (err) {
-          console.warn("[scan:stream] enqueue failed", { requestId, error: String(err) });
-        }
-      };
+          closed = true;
+          try {
+            controller.close();
+          } catch (err) {
+            console.warn("[scan:stream] close failed", { requestId, error: String(err) });
+          }
+        };
+        const send = (event: ScanEvent) => {
+          try {
+            if (closed) return;
+            console.log("[scan:stream] emit", { requestId, eventType: event.type, event });
+            controller.enqueue(new TextEncoder().encode(sse(event)));
+          } catch (err) {
+            console.warn("[scan:stream] enqueue failed", { requestId, error: String(err) });
+          }
+        };
 
-      try {
-        send({
-          type: "verbose",
-          stage: "stream",
-          message: "SSE stream opened",
-          data: { requestId, userId, sessionEmail: session.user?.email ?? null },
-        });
-        heartbeat = setInterval(() => {
+        try {
           send({
             type: "verbose",
             stage: "stream",
-            message: "SSE heartbeat",
-            data: { requestId, ts: new Date().toISOString() },
+            message: "SSE stream opened",
+            data: { requestId, userId, sessionEmail: session.user?.email ?? null },
           });
-        }, 5000);
+          heartbeat = setInterval(() => {
+            send({
+              type: "verbose",
+              stage: "stream",
+              message: "SSE heartbeat",
+              data: { requestId, ts: new Date().toISOString() },
+            });
+          }, 5000);
 
         // Get or bootstrap gmail_account
         let { data: accounts } = await db
@@ -92,8 +104,6 @@ export async function GET() {
 
           if (!oauthAccount?.refresh_token) {
             send({ type: "error", message: "No Google account linked. Please sign in again." });
-            controller.close();
-            closed = true;
             return;
           }
 
@@ -121,8 +131,6 @@ export async function GET() {
         const account = accounts?.[0];
         if (!account) {
           send({ type: "error", message: "Could not create Gmail account record." });
-          controller.close();
-          closed = true;
           return;
         }
         send({
@@ -141,28 +149,31 @@ export async function GET() {
           },
           send,
         );
-      } catch (err) {
-        console.error("[scan:stream] uncaught stream error", { requestId, error: String(err) });
-        send({ type: "error", message: String(err).slice(0, 200) });
-      } finally {
-        if (heartbeat) clearInterval(heartbeat);
-        send({
-          type: "verbose",
-          stage: "stream",
-          message: "SSE stream closing",
-          data: { requestId },
-        });
-        closed = true;
-        controller.close();
-      }
-    },
-  });
+        } catch (err) {
+          console.error("[scan:stream] uncaught stream error", { requestId, error: String(err) });
+          send({ type: "error", message: String(err).slice(0, 200) });
+        } finally {
+          if (heartbeat) clearInterval(heartbeat);
+          send({
+            type: "verbose",
+            stage: "stream",
+            message: "SSE stream closing",
+            data: { requestId },
+          });
+          safeClose();
+        }
+      },
+    });
 
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-    },
-  });
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
+  } catch (err) {
+    console.error("[scan:stream] GET fatal", { error: String(err) });
+    return new Response(`Stream init failed: ${String(err).slice(0, 400)}`, { status: 500 });
+  }
 }
