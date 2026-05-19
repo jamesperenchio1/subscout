@@ -1,3 +1,5 @@
+"use client";
+
 import { formatMoney, daysUntil } from "@/lib/format";
 
 interface Sub {
