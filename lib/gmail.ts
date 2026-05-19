@@ -94,9 +94,16 @@ export async function getMessageBody(gmail: gmail_v1.Gmail, id: string, maxChars
   return extractPlainText(res.data.payload).slice(0, maxChars);
 }
 
+export interface PdfAttachment {
+  filename: string;
+  attachmentId: string;
+  sizeBytes: number;
+}
+
 export interface FullMessage extends MessageHeaders {
   body: string;
   internalDate: number;
+  pdfAttachments: PdfAttachment[];
 }
 
 function decodeHtmlEntities(str: string): string {
@@ -110,9 +117,31 @@ function decodeHtmlEntities(str: string): string {
     .replace(/&nbsp;/g, " ");
 }
 
+function collectPdfAttachments(
+  part: gmail_v1.Schema$MessagePart | undefined,
+  results: PdfAttachment[],
+): void {
+  if (!part) return;
+  const mt = part.mimeType ?? "";
+  const name = part.filename ?? "";
+  const isPdf =
+    mt === "application/pdf" ||
+    (mt === "application/octet-stream" && name.toLowerCase().endsWith(".pdf"));
+  if (isPdf && part.body?.attachmentId) {
+    results.push({
+      filename: name || "attachment.pdf",
+      attachmentId: part.body.attachmentId,
+      sizeBytes: part.body.size ?? 0,
+    });
+  }
+  for (const child of part.parts ?? []) collectPdfAttachments(child, results);
+}
+
 export async function getFullMessage(gmail: gmail_v1.Gmail, id: string, maxBodyChars = 5000): Promise<FullMessage> {
   const res = await gmail.users.messages.get({ userId: "me", id, format: "full" });
   const headers = res.data.payload?.headers;
+  const pdfAttachments: PdfAttachment[] = [];
+  collectPdfAttachments(res.data.payload, pdfAttachments);
   return {
     id,
     subject: headerValue(headers, "Subject"),
@@ -121,7 +150,22 @@ export async function getFullMessage(gmail: gmail_v1.Gmail, id: string, maxBodyC
     snippet: decodeHtmlEntities(res.data.snippet ?? ""),
     body: extractPlainText(res.data.payload).slice(0, maxBodyChars),
     internalDate: Number(res.data.internalDate ?? 0),
+    pdfAttachments,
   };
+}
+
+export async function downloadAttachment(
+  gmail: gmail_v1.Gmail,
+  messageId: string,
+  attachmentId: string,
+): Promise<Buffer> {
+  const res = await gmail.users.messages.attachments.get({
+    userId: "me",
+    messageId,
+    id: attachmentId,
+  });
+  const data = res.data.data ?? "";
+  return Buffer.from(data.replace(/-/g, "+").replace(/_/g, "/"), "base64");
 }
 
 // Parse "Name <addr@host>" or bare "addr@host" -> { email, domain }

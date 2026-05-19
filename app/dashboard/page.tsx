@@ -5,6 +5,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { encrypt } from "@/lib/crypto";
 import { FirstScanPanel } from "@/components/first-scan-panel";
 import { DashboardTabs } from "@/components/dashboard/dashboard-tabs";
+import { NeedsReviewSection } from "@/components/dashboard/needs-review-section";
 import { formatMoney, monthlyAmount, daysUntil } from "@/lib/format";
 import { HOME_CURRENCY } from "@/lib/thailand";
 
@@ -58,6 +59,32 @@ export default async function Dashboard() {
     .eq("user_id", userId);
 
   const needsScan = !account || !account.scanned_through_date || (emailCount ?? 0) === 0;
+
+  const { data: needsReviewRaw } = await db
+    .from("email_events")
+    .select("id, subject, sender_email, sent_at, raw_extract, gmail_accounts(google_email)")
+    .eq("user_id", userId)
+    .eq("pdf_parse_status", "image_only")
+    .order("sent_at", { ascending: false })
+    .limit(50);
+
+  const needsReview = (needsReviewRaw ?? []).map((row) => {
+    const ga = row.gmail_accounts;
+    const sourceEmail = Array.isArray(ga)
+      ? (ga[0] as { google_email: string | null } | undefined)?.google_email ?? null
+      : (ga as { google_email: string | null } | null)?.google_email ?? null;
+    const pdfAttachments =
+      (row.raw_extract as { pdf_attachments?: { filename: string; sizeBytes: number; status: string }[] } | null)
+        ?.pdf_attachments?.filter((a) => a.status === "image_only") ?? [];
+    return {
+      id: row.id,
+      subject: row.subject,
+      sender_email: row.sender_email,
+      sent_at: row.sent_at,
+      source_email: sourceEmail,
+      pdf_attachments: pdfAttachments,
+    };
+  });
 
   const { data: subs } = await db
     .from("subscriptions")
@@ -184,6 +211,10 @@ export default async function Dashboard() {
                 </div>
               </div>
             </section>
+
+            {needsReview.length > 0 && (
+              <NeedsReviewSection initialEmails={needsReview} />
+            )}
 
             <DashboardTabs
               activeSubs={active}
