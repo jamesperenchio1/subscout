@@ -12,7 +12,14 @@ import { HOME_CURRENCY } from "@/lib/thailand";
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
-export default async function Dashboard() {
+export default async function Dashboard({
+  searchParams,
+}: {
+  searchParams: Promise<{ tab?: string }>;
+}) {
+  const { tab } = await searchParams;
+  const activeTab = tab === "one-offs" ? "one-offs" : "active";
+
   const session = await auth();
   const userId = (session?.user as { id?: string } | undefined)?.id;
   if (!session || !userId) redirect("/");
@@ -52,7 +59,6 @@ export default async function Dashboard() {
 
   const account = accounts?.[0];
 
-  // Count emails ingested → determines whether a scan has ever run
   const { count: emailCount } = await db
     .from("email_events")
     .select("*", { count: "exact", head: true })
@@ -98,6 +104,18 @@ export default async function Dashboard() {
     await signOut({ redirectTo: "/" });
   }
 
+  async function rescan() {
+    "use server";
+    const sess = await auth();
+    const uid = (sess?.user as { id?: string } | undefined)?.id;
+    if (!uid) return;
+    await supabaseAdmin()
+      .from("gmail_accounts")
+      .update({ scanned_through_date: null })
+      .eq("user_id", uid);
+    redirect("/dashboard");
+  }
+
   return (
     <div className="flex flex-1 flex-col bg-[#f7f4ee] text-stone-950">
       <header className="border-b border-stone-200 bg-white/80 backdrop-blur">
@@ -107,6 +125,13 @@ export default async function Dashboard() {
           </div>
           <div className="flex min-w-0 items-center gap-3 text-sm text-stone-600">
             <span className="hidden truncate sm:inline">{session.user?.email}</span>
+            {!needsScan && (
+              <form action={rescan}>
+                <button className="rounded-full border border-stone-300 px-3 py-1.5 font-medium hover:bg-stone-100">
+                  Rescan
+                </button>
+              </form>
+            )}
             <form action={disconnect}>
               <button className="rounded-full border border-stone-300 px-3 py-1.5 font-medium hover:bg-stone-100">
                 Sign out
@@ -130,7 +155,7 @@ export default async function Dashboard() {
                 <div className="mt-6 grid gap-3 sm:grid-cols-3">
                   <Signal label="Connected inbox" value={account?.google_email ?? "Gmail"} />
                   <Signal label="Confirmed" value={String(active.length)} />
-                  <Signal label="Needs review" value={String(possible.length)} />
+                  <Signal label="One-offs" value={String(possible.length)} />
                 </div>
               </div>
               <div className="rounded-[2rem] border border-stone-200 bg-white p-6">
@@ -153,70 +178,105 @@ export default async function Dashboard() {
               </div>
             </section>
 
-            <section className="grid gap-4 lg:grid-cols-[280px_1fr]">
-              <aside className="space-y-4">
-                <div className="rounded-2xl border border-stone-200 bg-white p-5">
-                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">Categories</p>
-                  <div className="mt-4 space-y-3">
-                    {topCategories.length ? topCategories.map(([category, data]) => (
-                      <div key={category}>
-                        <div className="flex justify-between text-sm">
-                          <span className="font-medium capitalize">{category}</span>
-                          <span className="text-stone-500">{data.count}</span>
-                        </div>
-                        <div className="mt-1 h-2 overflow-hidden rounded-full bg-stone-100">
-                          <div
-                            className="h-full rounded-full bg-lime-300"
-                            style={{ width: `${Math.max(12, Math.min(100, data.monthly))}%` }}
-                          />
-                        </div>
-                      </div>
-                    )) : (
-                      <p className="text-sm text-stone-500">Categories appear after scan.</p>
-                    )}
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-stone-200 bg-white p-5">
-                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">How detection works</p>
-                  <p className="mt-3 text-sm leading-6 text-stone-600">
-                    Each billing email is embedded locally and clustered with similar emails. A cluster becomes a subscription only when we see 2+ matching charges or an explicit confirmation.
-                  </p>
-                </div>
-                {canceled.length > 0 && (
-                  <div className="rounded-2xl border border-stone-200 bg-white p-5">
-                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">Past subscriptions</p>
-                    <p className="mt-2 text-sm text-stone-600">{canceled.length} canceled or expired</p>
-                  </div>
-                )}
-              </aside>
+            {/* Tab bar */}
+            <div className="flex gap-1 rounded-2xl border border-stone-200 bg-white p-1 w-fit">
+              <Link
+                href="/dashboard"
+                className={`rounded-xl px-5 py-2 text-sm font-semibold transition-colors ${
+                  activeTab === "active"
+                    ? "bg-stone-950 text-white"
+                    : "text-stone-600 hover:text-stone-950"
+                }`}
+              >
+                Active{active.length > 0 ? ` (${active.length})` : ""}
+              </Link>
+              <Link
+                href="/dashboard?tab=one-offs"
+                className={`rounded-xl px-5 py-2 text-sm font-semibold transition-colors ${
+                  activeTab === "one-offs"
+                    ? "bg-stone-950 text-white"
+                    : "text-stone-600 hover:text-stone-950"
+                }`}
+              >
+                One-offs{possible.length > 0 ? ` (${possible.length})` : ""}
+              </Link>
+            </div>
 
-              <div>
-                <div className="mb-4 flex items-end justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-semibold text-stone-500">Confirmed subscriptions</p>
-                    <h2 className="text-2xl font-semibold tracking-tight">Recurring spend</h2>
+            {activeTab === "active" ? (
+              <section className="grid gap-4 lg:grid-cols-[280px_1fr]">
+                <aside className="space-y-4">
+                  <div className="rounded-2xl border border-stone-200 bg-white p-5">
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">Categories</p>
+                    <div className="mt-4 space-y-3">
+                      {topCategories.length ? topCategories.map(([category, data]) => (
+                        <div key={category}>
+                          <div className="flex justify-between text-sm">
+                            <span className="font-medium capitalize">{category}</span>
+                            <span className="text-stone-500">{data.count}</span>
+                          </div>
+                          <div className="mt-1 h-2 overflow-hidden rounded-full bg-stone-100">
+                            <div
+                              className="h-full rounded-full bg-lime-300"
+                              style={{ width: `${Math.max(12, Math.min(100, data.monthly))}%` }}
+                            />
+                          </div>
+                        </div>
+                      )) : (
+                        <p className="text-sm text-stone-500">Categories appear after scan.</p>
+                      )}
+                    </div>
                   </div>
-                  <Link
-                    href="/subscriptions"
-                    className="text-sm font-semibold text-stone-700 underline-offset-2 hover:underline"
-                  >
-                    View all →
-                  </Link>
+                  <div className="rounded-2xl border border-stone-200 bg-white p-5">
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">How detection works</p>
+                    <p className="mt-3 text-sm leading-6 text-stone-600">
+                      Each billing email is embedded locally and clustered with similar emails. A cluster becomes a subscription only when we see 2+ matching charges or an explicit confirmation.
+                    </p>
+                  </div>
+                  {canceled.length > 0 && (
+                    <div className="rounded-2xl border border-stone-200 bg-white p-5">
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">Past subscriptions</p>
+                      <p className="mt-2 text-sm text-stone-600">{canceled.length} canceled or expired</p>
+                    </div>
+                  )}
+                </aside>
+
+                <div>
+                  <div className="mb-4 flex items-end justify-between gap-4">
+                    <div>
+                      <p className="text-sm font-semibold text-stone-500">Confirmed subscriptions</p>
+                      <h2 className="text-2xl font-semibold tracking-tight">Recurring spend</h2>
+                    </div>
+                    <Link
+                      href="/subscriptions"
+                      className="text-sm font-semibold text-stone-700 underline-offset-2 hover:underline"
+                    >
+                      View all →
+                    </Link>
+                  </div>
+                  {active.length === 0 ? (
+                    <EmptyState />
+                  ) : (
+                    <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                      {active.map((s) => (
+                        <SubscriptionCard key={s.id} sub={s} />
+                      ))}
+                    </section>
+                  )}
                 </div>
-                {active.length === 0 ? (
-                  <EmptyState />
+              </section>
+            ) : (
+              <div>
+                {possible.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-stone-300 bg-white p-12 text-center">
+                    <h2 className="text-lg font-semibold">No one-offs found</h2>
+                    <p className="mx-auto mt-2 max-w-md text-sm text-stone-600">
+                      Single billing events that don&apos;t repeat will appear here.
+                    </p>
+                  </div>
                 ) : (
-                  <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                    {active.map((s) => (
-                      <SubscriptionCard key={s.id} sub={s} />
-                    ))}
-                  </section>
+                  <PossibleSubsSection subs={possible} />
                 )}
               </div>
-            </section>
-
-            {possible.length > 0 && (
-              <PossibleSubsSection subs={possible} />
             )}
           </>
         )}
@@ -230,13 +290,8 @@ function EmptyState() {
     <div className="rounded-2xl border border-dashed border-stone-300 bg-white p-12 text-center">
       <h2 className="text-lg font-semibold">No confirmed subscriptions yet</h2>
       <p className="mx-auto mt-2 max-w-md text-sm text-stone-600">
-        We didn&apos;t see 2+ matching charges for any service. Check &ldquo;Possible subscriptions&rdquo; below or rescan once more billing arrives.
+        We didn&apos;t see 2+ matching charges for any service. Check the &ldquo;One-offs&rdquo; tab or rescan once more billing arrives.
       </p>
-      <form action="/dashboard">
-        <button className="mt-6 rounded-full bg-stone-950 px-4 py-2 text-sm font-semibold text-white">
-          Refresh
-        </button>
-      </form>
     </div>
   );
 }
