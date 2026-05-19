@@ -1,4 +1,4 @@
-import { gmailClient, listBillingMessageIds, getFullMessage, parseSender, type FullMessage } from "@/lib/gmail";
+import { gmailClient, listBillingMessageIds, getFullMessage, getMessageMetadata, parseSender, type FullMessage, type MessageHeaders } from "@/lib/gmail";
 import { shouldProcessEmail } from "@/lib/heuristic";
 import { supabaseAdmin } from "@/lib/supabase";
 import { embed, toPgVector } from "./embed";
@@ -11,7 +11,7 @@ const SCAN_DAYS = 730;
 
 export type ScanEvent =
   | { type: "stage"; stage: string; message: string }
-  | { type: "progress"; current: number; total: number; stage: string }
+  | { type: "progress"; current: number; total: number; filtered?: number; stage: string }
   | { type: "found"; service: string; status: string; evidence: string; amount: number | null; currency: string | null; cycle: string | null }
   | { type: "summary"; confirmed: number; possible: number; canceled: number; trial: number }
   | { type: "error"; message: string }
@@ -48,27 +48,40 @@ export async function runScan(
   const newIds = ids.filter((id) => !existing.has(id));
   log({ type: "stage", stage: "filter", message: `${newIds.length} new emails to process (${ids.length - newIds.length} already seen)` });
 
-  // ── 2. Fetch, filter, embed, insert ────────────────────────────────────
-  let processed = 0;
-  let ingested = 0;
+  // ── 2a. Metadata pass — heuristic filter on subject + snippet only ─────
+  let metaProcessed = 0;
+  const filteredIds: string[] = [];
   for (const id of newIds) {
+    let meta: MessageHeaders;
+    try {
+      meta = await getMessageMetadata(gmail, id);
+    } catch {
+      metaProcessed++;
+      log({ type: "progress", current: metaProcessed, total: newIds.length, stage: "ingest" });
+      continue;
+    }
+    metaProcessed++;
+    log({ type: "progress", current: metaProcessed, total: newIds.length, stage: "ingest" });
+    if (shouldProcessEmail(meta.subject, meta.snippet)) {
+      filteredIds.push(id);
+    }
+  }
+  log({ type: "stage", stage: "filter", message: `${filteredIds.length} of ${newIds.length} passed heuristic filter` });
+  log({ type: "progress", current: newIds.length, total: newIds.length, filtered: filteredIds.length, stage: "ingest" });
+
+  // ── 2b. Full-body pass — embed and insert filtered emails only ──────────
+  let ingested = 0;
+  for (const id of filteredIds) {
     let full: FullMessage;
     try {
       full = await getFullMessage(gmail, id, 5000);
     } catch {
-      processed++;
       continue;
     }
-    processed++;
-    log({ type: "progress", current: processed, total: newIds.length, stage: "ingest" });
-
-    const keep = shouldProcessEmail(full.subject, full.snippet || full.body.slice(0, 500));
-    if (!keep) continue;
 
     const { email: senderEmail, domain: senderDomain } = parseSender(full.from);
     const sentAt = full.internalDate ? new Date(full.internalDate).toISOString() : null;
 
-    // Compute embedding server-side
     const embeddingText = `${full.subject ?? ""}\n${full.body.slice(0, 800)}`.replace(/\s+/g, " ").trim().slice(0, 2000);
     let embeddingVec: string | null = null;
     try {

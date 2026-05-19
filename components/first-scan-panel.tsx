@@ -12,7 +12,7 @@ interface LogLine {
 
 export function FirstScanPanel() {
   const router = useRouter();
-  const [progress, setProgress] = useState({ current: 0, total: 0 });
+  const [progress, setProgress] = useState({ current: 0, total: 0, filtered: 0 });
   const [found, setFound] = useState(0);
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [done, setDone] = useState(false);
@@ -42,7 +42,7 @@ export function FirstScanPanel() {
           addLog(event.message, "text-zinc-400");
           break;
         case "progress":
-          setProgress({ current: event.current, total: event.total });
+          setProgress((prev) => ({ current: event.current, total: event.total, filtered: event.filtered ?? prev.filtered }));
           break;
         case "found":
           setFound((n) => n + 1);
@@ -111,7 +111,7 @@ export function FirstScanPanel() {
         <div className="grid grid-cols-3 gap-3">
           {[
             { label: "Processed", value: `${progress.current}${progress.total ? ` / ${progress.total}` : ""}` },
-            { label: "Passed filter", value: String(progress.total) },
+            { label: "Passed filter", value: String(progress.filtered) },
             { label: "Found", value: String(found), highlight: true },
           ].map(({ label, value, highlight }) => (
             <div key={label} className="rounded-2xl border border-stone-200 bg-white p-4">
@@ -156,7 +156,7 @@ export function FirstScanPanel() {
               onClick={() => {
                 doneRef.current = false;
                 setDone(false);
-                setProgress({ current: 0, total: 0 });
+                setProgress({ current: 0, total: 0, filtered: 0 });
                 setFound(0);
                 setLogs([]);
                 setError(false);
