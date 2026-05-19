@@ -1,3 +1,5 @@
+"use client";
+
 import { formatMoney } from "@/lib/format";
 
 interface PossibleSub {
