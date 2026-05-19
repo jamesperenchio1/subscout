@@ -101,9 +101,12 @@ export default async function Dashboard() {
     const sess = await auth();
     const uid = (sess?.user as { id?: string } | undefined)?.id;
     if (!uid) return;
-    await supabaseAdmin()
-      .from("gmail_accounts")
-      .update({ scanned_through_date: null })
+    const db = supabaseAdmin();
+    await db.from("gmail_accounts").update({ scanned_through_date: null }).eq("user_id", uid);
+    // Reset email classifications so the improved Groq prompt re-runs on existing emails
+    await db
+      .from("email_events")
+      .update({ event_type: null, service_name_raw: null, service_brand: null, cluster_id: null })
       .eq("user_id", uid);
     redirect("/dashboard");
   }

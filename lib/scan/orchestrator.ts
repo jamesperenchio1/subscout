@@ -89,7 +89,7 @@ export async function runScan(
   for (const id of filteredIds) {
     let full: FullMessage;
     try {
-      full = await getFullMessage(gmail, id, 5000);
+      full = await getFullMessage(gmail, id, 10000);
     } catch (err) {
       console.warn(`[scan] full-body fetch failed for ${id}:`, String(err));
       continue;
