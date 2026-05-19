@@ -11,9 +11,11 @@ function sse(event: ScanEvent): string {
 }
 
 export async function GET() {
+  console.log("[scan] GET handler entered");
   const session = await auth();
   const userId = (session?.user as { id?: string } | undefined)?.id;
   if (!session || !userId) {
+    console.log("[scan] no session, returning 401");
     return new Response("Unauthorized", { status: 401 });
   }
 
