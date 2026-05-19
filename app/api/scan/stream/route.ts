@@ -17,26 +17,49 @@ export async function GET() {
     return new Response("Unauthorized", { status: 401 });
   }
 
+  console.log(`[scan] starting for user=${userId}`);
+
   const db = supabaseAdmin();
 
   const stream = new ReadableStream({
     async start(controller) {
+      let closed = false;
+
       const send = (event: ScanEvent) => {
+        if (closed) return;
         try {
           controller.enqueue(new TextEncoder().encode(sse(event)));
+          if (event.type === "stage" || event.type === "error" || event.type === "done") {
+            console.log(`[scan] ${event.type}:`, JSON.stringify(event));
+          }
         } catch {
-          // stream already closed
+          closed = true;
         }
       };
 
+      // Keep connection alive through proxy timeouts
+      const heartbeat = setInterval(() => {
+        if (closed) { clearInterval(heartbeat); return; }
+        try {
+          controller.enqueue(new TextEncoder().encode(": heartbeat\n\n"));
+        } catch {
+          closed = true;
+          clearInterval(heartbeat);
+        }
+      }, 20_000);
+
       try {
-        // Get or bootstrap gmail_account
+        send({ type: "stage", stage: "init", message: "Authenticating with Gmail…" });
+
         let { data: accounts } = await db
           .from("gmail_accounts")
           .select("id, user_id, google_email, refresh_token_encrypted")
           .eq("user_id", userId);
 
         if (!accounts?.length) {
+          send({ type: "stage", stage: "init", message: "No Gmail account found — bootstrapping from OAuth…" });
+          console.log(`[scan] no gmail_account for user=${userId}, looking up OAuth token`);
+
           const { data: oauthAccount } = await db
             .schema("next_auth")
             .from("accounts")
@@ -46,13 +69,15 @@ export async function GET() {
             .maybeSingle();
 
           if (!oauthAccount?.refresh_token) {
-            send({ type: "error", message: "No Google account linked. Please sign in again." });
+            const msg = "No Google refresh token found. Try signing out and back in.";
+            console.error(`[scan] ${msg}`);
+            send({ type: "error", message: msg });
             controller.close();
             return;
           }
 
           const email = session.user?.email ?? "";
-          const { data: created } = await db
+          const { data: created, error: upsertErr } = await db
             .from("gmail_accounts")
             .upsert(
               {
@@ -63,15 +88,28 @@ export async function GET() {
               { onConflict: "user_id,google_email" },
             )
             .select("id, user_id, google_email, refresh_token_encrypted");
+
+          if (upsertErr) {
+            const msg = `Failed to save Gmail account: ${upsertErr.message}`;
+            console.error(`[scan] ${msg}`);
+            send({ type: "error", message: msg });
+            controller.close();
+            return;
+          }
+
           accounts = created;
         }
 
         const account = accounts?.[0];
         if (!account) {
-          send({ type: "error", message: "Could not create Gmail account record." });
+          const msg = "Could not create Gmail account record — accounts list empty after upsert.";
+          console.error(`[scan] ${msg}`);
+          send({ type: "error", message: msg });
           controller.close();
           return;
         }
+
+        console.log(`[scan] running scan for gmail=${account.google_email}`);
 
         await runScan(
           {
@@ -82,9 +120,17 @@ export async function GET() {
           },
           send,
         );
+
+        console.log(`[scan] completed for gmail=${account.google_email}`);
       } catch (err) {
-        send({ type: "error", message: String(err).slice(0, 200) });
+        const message = err instanceof Error
+          ? `${err.message}\n${err.stack ?? ""}`
+          : String(err);
+        console.error(`[scan] unhandled error:`, message);
+        send({ type: "error", message: message.slice(0, 500) });
       } finally {
+        clearInterval(heartbeat);
+        closed = true;
         controller.close();
       }
     },
