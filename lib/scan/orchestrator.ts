@@ -1,7 +1,6 @@
 import { gmailClient, listBillingMessageIds, getFullMessage, getMessageMetadata, parseSender, type FullMessage, type MessageHeaders } from "@/lib/gmail";
 import { shouldProcessEmail } from "@/lib/heuristic";
 import { supabaseAdmin } from "@/lib/supabase";
-import { embed, toPgVector } from "./embed";
 import { clusterPendingEvents } from "./cluster";
 import { classifyClusters } from "./classify";
 import { enrichUnresolvedEvents } from "./enrich";
@@ -83,8 +82,8 @@ export async function runScan(
   log({ type: "stage", stage: "filter", message: `${filteredIds.length} of ${newIds.length} passed heuristic filter (${elapsed(t)})` });
   log({ type: "progress", current: newIds.length, total: newIds.length, filtered: filteredIds.length, stage: "ingest" });
 
-  // ── 2b. Full-body pass — embed and insert filtered emails only ──────────
-  console.log(`[scan] stage 2b: full-body fetch + embed for ${filteredIds.length} emails`);
+  // ── 2b. Full-body pass — fetch and insert filtered emails ──────────────
+  console.log(`[scan] stage 2b: full-body fetch for ${filteredIds.length} emails`);
   t = Date.now();
   let ingested = 0;
   for (const id of filteredIds) {
@@ -99,16 +98,6 @@ export async function runScan(
     const { email: senderEmail, domain: senderDomain } = parseSender(full.from);
     const sentAt = full.internalDate ? new Date(full.internalDate).toISOString() : null;
 
-    const embeddingText = `${full.subject ?? ""}\n${full.body.slice(0, 800)}`.replace(/\s+/g, " ").trim().slice(0, 2000);
-    let embeddingVec: string | null = null;
-    try {
-      const vec = await embed(embeddingText);
-      embeddingVec = toPgVector(vec);
-    } catch (err) {
-      console.warn(`[scan] embed failed for ${id}:`, String(err));
-      // Proceed without embedding — cluster pass will skip unembedded events
-    }
-
     const { error: insertErr } = await db.from("email_events").insert({
       user_id: account.user_id,
       gmail_account_id: account.id,
@@ -117,7 +106,6 @@ export async function runScan(
       sender_email: senderEmail,
       sender_domain: senderDomain,
       sent_at: sentAt,
-      embedding: embeddingVec,
       raw_extract: { body: full.body, snippet: full.snippet },
     });
     if (insertErr) {
@@ -136,8 +124,8 @@ export async function runScan(
     .update({ scanned_through_date: scannedThroughDate })
     .eq("id", account.id);
 
-  // ── 3. Cluster ──────────────────────────────────────────────────────────
-  log({ type: "stage", stage: "cluster", message: "Clustering similar emails…" });
+  // ── 3. Cluster by sender domain ─────────────────────────────────────────
+  log({ type: "stage", stage: "cluster", message: "Grouping emails by sender domain…" });
   console.log("[scan] stage 3: clustering");
   t = Date.now();
   const clusterRes = await clusterPendingEvents(account.user_id);
