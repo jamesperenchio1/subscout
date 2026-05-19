@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { formatMoney } from "@/lib/format";
+import { EditSubscriptionModal } from "@/components/subscription-edit-modal";
+import { DismissSubscriptionModal } from "@/components/subscription-dismiss-modal";
 
 interface PossibleSub {
   id: string;
@@ -12,6 +14,8 @@ interface PossibleSub {
   billing_cycle: string | null;
   brand_logo_url: string | null;
   category: string | null;
+  next_renewal_date: string | null;
+  status: string;
 }
 
 interface EvidenceEmail {
@@ -78,6 +82,77 @@ function EvidenceToggle({ subId }: { subId: string }) {
   );
 }
 
+function PossibleSubCard({ sub }: { sub: PossibleSub }) {
+  const [showDismiss, setShowDismiss] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
+
+  return (
+    <>
+      {showDismiss && (
+        <DismissSubscriptionModal
+          subId={sub.id}
+          subName={sub.service_brand}
+          onClose={() => setShowDismiss(false)}
+        />
+      )}
+      {showEdit && (
+        <EditSubscriptionModal sub={sub} onClose={() => setShowEdit(false)} />
+      )}
+      <article className="rounded-2xl bg-white p-4">
+        <div className="flex items-center gap-3">
+          {sub.brand_logo_url && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={sub.brand_logo_url}
+              alt=""
+              className="h-8 w-8 rounded-md bg-stone-100 object-contain"
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).style.display = "none";
+              }}
+            />
+          )}
+          <div className="min-w-0 flex-1">
+            <p className="truncate font-semibold text-stone-900">{sub.service_brand}</p>
+            <p className="text-xs text-stone-500">
+              {sub.amount != null
+                ? formatMoney(sub.amount, sub.currency ?? "USD")
+                : "Unknown amount"}{" "}
+              · {sub.billing_cycle ?? "cycle unknown"}
+            </p>
+          </div>
+          <button
+            onClick={() => setShowEdit(true)}
+            title="Edit"
+            className="shrink-0 rounded-full p-1 text-stone-400 hover:bg-stone-100 hover:text-stone-700"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+            </svg>
+          </button>
+        </div>
+        <div className="mt-3 flex gap-2">
+          <form action={`/api/subscriptions/${sub.id}/confirm`} method="post" className="flex-1">
+            <button
+              type="submit"
+              className="w-full rounded-full bg-stone-950 px-3 py-1.5 text-xs font-semibold text-white hover:bg-stone-800"
+            >
+              ✓ Confirm
+            </button>
+          </form>
+          <button
+            onClick={() => setShowDismiss(true)}
+            className="flex-1 rounded-full border border-stone-300 px-3 py-1.5 text-xs font-semibold text-stone-700 hover:bg-stone-50"
+          >
+            ✗ Dismiss
+          </button>
+        </div>
+        <EvidenceToggle subId={sub.id} />
+      </article>
+    </>
+  );
+}
+
 export function PossibleSubsSection({ subs }: { subs: PossibleSub[] }) {
   return (
     <section className="rounded-[2rem] border border-amber-200 bg-amber-50 p-6">
@@ -94,46 +169,7 @@ export function PossibleSubsSection({ subs }: { subs: PossibleSub[] }) {
 
       <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
         {subs.map((sub) => (
-          <article key={sub.id} className="rounded-2xl bg-white p-4">
-            <div className="flex items-center gap-3">
-              {sub.brand_logo_url && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={sub.brand_logo_url}
-                  alt=""
-                  className="h-8 w-8 rounded-md bg-stone-100 object-contain"
-                  onError={(e) => {
-                    (e.currentTarget as HTMLImageElement).style.display = "none";
-                  }}
-                />
-              )}
-              <div className="min-w-0 flex-1">
-                <p className="truncate font-semibold text-stone-900">{sub.service_brand}</p>
-                <p className="text-xs text-stone-500">
-                  {sub.amount != null ? formatMoney(sub.amount, sub.currency ?? "USD") : "Unknown amount"} · {sub.billing_cycle ?? "cycle unknown"}
-                </p>
-              </div>
-            </div>
-            <div className="mt-3 flex gap-2">
-              <form action={`/api/subscriptions/${sub.id}/confirm`} method="post" className="flex-1">
-                <button
-                  type="submit"
-                  className="w-full rounded-full bg-stone-950 px-3 py-1.5 text-xs font-semibold text-white hover:bg-stone-800"
-                >
-                  ✓ Confirm
-                </button>
-              </form>
-              <form action={`/api/subscriptions/${sub.id}/dismiss`} method="post" className="flex-1">
-                <button
-                  type="submit"
-                  className="w-full rounded-full border border-stone-300 px-3 py-1.5 text-xs font-semibold text-stone-700 hover:bg-stone-50"
-                >
-                  ✗ Dismiss
-                </button>
-              </form>
-            </div>
-            <EvidenceToggle subId={sub.id} />
-          </article>
+          <PossibleSubCard key={sub.id} sub={sub} />
         ))}
       </div>
     </section>

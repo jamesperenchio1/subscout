@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { formatMoney, daysUntil } from "@/lib/format";
+import { EditSubscriptionModal } from "./subscription-edit-modal";
 
 interface Sub {
   id: string;
@@ -63,6 +64,7 @@ export function SubscriptionCard({ sub }: { sub: Sub }) {
   const [showEvidence, setShowEvidence] = useState(false);
   const [evidence, setEvidence] = useState<EvidenceEmail[] | null>(null);
   const [loadingEvidence, setLoadingEvidence] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
 
   async function toggleEvidence() {
     if (showEvidence) { setShowEvidence(false); return; }
@@ -78,6 +80,10 @@ export function SubscriptionCard({ sub }: { sub: Sub }) {
   }
 
   return (
+    <>
+    {showEdit && (
+      <EditSubscriptionModal sub={sub} onClose={() => setShowEdit(false)} />
+    )}
     <article className={`flex flex-col rounded-2xl border bg-white p-5 ${isFailed ? "border-red-300" : isTrial ? "border-amber-300" : "border-stone-200"}`}>
       {isFailed && (
         <div className="mb-3 rounded-md bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700">
@@ -107,9 +113,21 @@ export function SubscriptionCard({ sub }: { sub: Sub }) {
             {sub.service_brand}
           </h3>
         </div>
-        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${CATEGORY_COLORS[cat] ?? CATEGORY_COLORS.other}`}>
-          {cat}
-        </span>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${CATEGORY_COLORS[cat] ?? CATEGORY_COLORS.other}`}>
+            {cat}
+          </span>
+          <button
+            onClick={() => setShowEdit(true)}
+            title="Edit subscription"
+            className="rounded-full p-1 text-stone-400 hover:bg-stone-100 hover:text-stone-700"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+            </svg>
+          </button>
+        </div>
       </div>
 
       <div className="mt-4 flex items-baseline gap-2">
@@ -192,5 +210,6 @@ export function SubscriptionCard({ sub }: { sub: Sub }) {
         </div>
       )}
     </article>
+    </>
   );
 }

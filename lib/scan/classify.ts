@@ -10,25 +10,39 @@ function client(): Groq {
   return _client;
 }
 
-const SYSTEM_PROMPT = `You are a billing event classifier. Read the email and decide what billing event it represents.
+const SYSTEM_PROMPT = `You are a billing event classifier. Read the email and extract billing information as JSON.
 
-Classify event_type as one of:
-- "charge"               — payment was successfully processed (receipt, "you were charged", invoice, order confirmation)
+## CRITICAL RULE — Payment processors
+If the sender domain or email header shows a PAYMENT PROCESSOR (Stripe, PayPal, Square, Gumroad, Paddle, Chargebee, Recurly, FastSpring, 2Checkout, Braintree), you MUST:
+- Set service_name_raw to the MERCHANT printed in the email body (the company that sold the product)
+- NEVER return "Stripe", "PayPal", or any processor name as service_name_raw
+- Look for phrases like "Your receipt from [Merchant]", "Payment to [Merchant]", "charged by [Merchant]"
+
+## Billing cycle rules
+- Set billing_cycle = "one_time" if the email has NO renewal language (no "subscription", "renew", "recurring", "monthly", "annual", "weekly", "quarterly", or future renewal date)
+- Plain purchase receipts and order confirmations with no subscription language are one_time
+- Set billing_cycle = "unknown" only if billing language exists but cycle is ambiguous
+
+## Event types
+- "charge"               — payment processed (receipt, invoice, order confirmation, "you were charged")
 - "renewal"              — subscription renewal notice or confirmation
-- "subscription_confirmed" — explicit welcome/subscription-active email
-- "failed_payment"       — payment attempt failed for an existing subscription
+- "subscription_confirmed" — welcome/subscription-active email
+- "failed_payment"       — payment failed for existing subscription
 - "trial_start"          — free trial began
-- "trial_ending"         — trial ends within next N days, payment pending
+- "trial_ending"         — trial ends soon, payment pending
 - "cancellation"         — subscription canceled or expired
-- "other"                — billing-adjacent (marketing, pricing announcements, account tips) — return is_billing: false
+- "other"                — billing-adjacent but no money movement; set is_billing: false
 
-For payment_source, infer from context:
-- "apple"      — Apple App Store / iTunes / Apple Subscription
-- "google_play"— Google Play Store
-- "direct"     — billed directly by the service
-- "card_XXXX"  — if a card last-4 is visible (e.g. "card_4532")
+## Payment source
+- "apple"       — Apple App Store / iTunes
+- "google_play" — Google Play Store
+- "direct"      — billed directly by the service
+- "card_XXXX"   — if a card last-4 is visible (e.g. "card_4532")
 
-Always valid JSON. Never markdown.`;
+## Confidence
+Set confidence < 0.5 if you are uncertain about merchant identity or billing cycle.
+
+Always return valid JSON. Never use markdown fences.`;
 
 export interface ClassifiedEvent {
   is_billing: boolean;
@@ -53,14 +67,20 @@ export async function classifyEmail(input: {
   body: string;
   recipientEmail?: string;
 }): Promise<ClassifiedEvent | null> {
-  const userPrompt = `Classify this email.
-Return JSON:
+  const userPrompt = `Classify this billing email. Return JSON only.
+
+EXAMPLES:
+- Stripe receipt for "Your receipt from Anthropic" → service_name_raw: "Anthropic", NOT "Stripe"
+- PayPal "You sent $9.99 to Netflix" → service_name_raw: "Netflix", NOT "PayPal"
+- Amazon order confirmation (no subscription mention) → billing_cycle: "one_time"
+- "Your Claude Pro subscription renews on Jun 1 for $20/mo" → service_name_raw: "Anthropic", billing_cycle: "monthly"
+
 {
   "is_billing": true,
   "event_type": "charge|renewal|subscription_confirmed|failed_payment|trial_start|trial_ending|cancellation|other",
-  "service_name_raw": "brand name (e.g. 'Netflix', 'Claude') — never plan tier",
+  "service_name_raw": "merchant brand name — NEVER a payment processor",
   "amount": number or null,
-  "currency": "ISO code, infer if not explicit",
+  "currency": "ISO code",
   "billing_cycle": "monthly|annual|weekly|quarterly|one_time|unknown",
   "payment_source": "apple|google_play|direct|card_XXXX",
   "trial_ends_at": "YYYY-MM-DD or null",
@@ -68,7 +88,7 @@ Return JSON:
   "last_billed_date": "YYYY-MM-DD or null",
   "cancellation_link": "URL or null",
   "category": "entertainment|saas|health|food|finance|utilities|other",
-  "confidence": 0-1
+  "confidence": 0.0-1.0
 }
 
 ${input.recipientEmail ? `(Recipient: ${input.recipientEmail})` : ""}
@@ -76,7 +96,7 @@ ${input.recipientEmail ? `(Recipient: ${input.recipientEmail})` : ""}
 Subject: ${input.subject}
 From: ${input.from}
 Date: ${input.date}
-Body: ${input.body.slice(0, 5000)}`;
+Body: ${input.body.slice(0, 8000)}`;
 
   try {
     const res = await client().chat.completions.create({

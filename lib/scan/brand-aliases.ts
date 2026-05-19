@@ -1,0 +1,55 @@
+export const PROCESSOR_DOMAINS = new Set([
+  "stripe.com",
+  "paypal.com",
+  "gumroad.com",
+  "paddle.com",
+  "chargebee.com",
+  "recurly.com",
+  "fastspring.com",
+  "2checkout.com",
+  "square.com",
+  "braintree.com",
+]);
+
+// Supplement enrich.ts DOMAIN_TO_BRAND — these take priority
+export const DOMAIN_CANONICAL: Record<string, string> = {
+  "claude.ai": "Anthropic",
+  "chatgpt.com": "OpenAI",
+  "accounts.google.com": "Google",
+  "play.google.com": "Google",
+  "music.youtube.com": "YouTube",
+};
+
+// service_name_raw (lowercased) → canonical brand
+export const NAME_CANONICAL: Record<string, string> = {
+  "claude": "Anthropic",
+  "claude.ai": "Anthropic",
+  "anthropic claude": "Anthropic",
+  "chatgpt": "OpenAI",
+  "openai": "OpenAI",
+  "gpt-4": "OpenAI",
+  "google one": "Google",
+  "google play": "Google",
+  "google llc": "Google",
+  "google workspace": "Google",
+  "google storage": "Google",
+  "youtube premium": "YouTube",
+  "youtube music": "YouTube",
+  "netflix, inc.": "Netflix",
+  "netflix inc": "Netflix",
+  "spotify ab": "Spotify",
+  "microsoft 365": "Microsoft",
+  "microsoft office": "Microsoft",
+  "office 365": "Microsoft",
+  "adobe creative cloud": "Adobe",
+  "adobe inc": "Adobe",
+  "github copilot": "GitHub",
+  "github, inc.": "GitHub",
+  "notion labs": "Notion",
+  "notion, inc.": "Notion",
+  "slack technologies": "Slack",
+  "figma, inc.": "Figma",
+  "dropbox, inc.": "Dropbox",
+  "amazon web services": "AWS",
+  "amazon prime": "Amazon",
+};

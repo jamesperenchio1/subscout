@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolveBrand } from "./enrich";
+import { NAME_CANONICAL } from "./brand-aliases";
 
 interface EventRow {
   id: string;
@@ -29,20 +30,55 @@ function median(nums: number[]): number {
   return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
 }
 
-function detectCycle(positiveDates: number[]): {
-  cycle: "weekly" | "monthly" | "quarterly" | "annual" | "unknown";
+type BillingCycle = "weekly" | "monthly" | "quarterly" | "annual" | "unknown";
+
+function detectCycleFromGaps(positiveDates: number[]): {
+  cycle: BillingCycle;
   cycleDays: number | null;
 } {
-  if (positiveDates.length < 2) return { cycle: "unknown", cycleDays: null };
+  // Require at least 3 samples for reliable gap-based detection
+  if (positiveDates.length < 3) return { cycle: "unknown", cycleDays: null };
   const sorted = [...positiveDates].sort((a, b) => a - b);
   const gaps: number[] = [];
   for (let i = 1; i < sorted.length; i++) gaps.push((sorted[i] - sorted[i - 1]) / DAY_MS);
   const m = median(gaps);
-  if (m < 10) return { cycle: "weekly", cycleDays: 7 };
+  if (m < 8) return { cycle: "weekly", cycleDays: 7 };
   if (m < 50) return { cycle: "monthly", cycleDays: 30 };
   if (m < 120) return { cycle: "quarterly", cycleDays: 90 };
   if (m < 500) return { cycle: "annual", cycleDays: 365 };
   return { cycle: "unknown", cycleDays: null };
+}
+
+function cycleToDays(cycle: BillingCycle): number | null {
+  if (cycle === "weekly") return 7;
+  if (cycle === "monthly") return 30;
+  if (cycle === "quarterly") return 90;
+  if (cycle === "annual") return 365;
+  return null;
+}
+
+function detectCycle(
+  positiveDates: number[],
+  classifiedCycles: (string | null | undefined)[],
+): { cycle: BillingCycle; cycleDays: number | null } {
+  // Prefer majority vote from classifier-extracted cycles
+  const validCycles = classifiedCycles.filter(
+    (c): c is BillingCycle =>
+      c === "weekly" || c === "monthly" || c === "quarterly" || c === "annual",
+  );
+  if (validCycles.length >= 2) {
+    const counts = new Map<BillingCycle, number>();
+    for (const c of validCycles) counts.set(c, (counts.get(c) ?? 0) + 1);
+    const best = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+    if (best && best[1] >= 2) {
+      return { cycle: best[0], cycleDays: cycleToDays(best[0]) };
+    }
+  }
+  if (validCycles.length === 1) {
+    return { cycle: validCycles[0], cycleDays: cycleToDays(validCycles[0]) };
+  }
+  // Fall back to gap-based detection (needs ≥3 samples)
+  return detectCycleFromGaps(positiveDates);
 }
 
 interface DetectResult {
@@ -60,6 +96,29 @@ interface DetectResult {
 export async function detectSubscriptions(userId: string): Promise<DetectResult> {
   const db = supabaseAdmin();
 
+  // Pre-fetch dismissed patterns (graceful if table doesn't exist yet)
+  let dismissedPatterns: { service_brand: string | null; payment_source: string | null; reason: string; canonical_brand: string | null }[] = [];
+  try {
+    const { data } = await db
+      .from("dismissed_patterns")
+      .select("service_brand, payment_source, reason, canonical_brand")
+      .eq("user_id", userId);
+    dismissedPatterns = data ?? [];
+  } catch { /* table may not exist yet */ }
+
+  // Pre-fetch existing subscriptions to preserve user_overrides across rescans
+  const { data: existingSubs } = await db
+    .from("subscriptions")
+    .select("service_brand, payment_source, user_overrides")
+    .eq("user_id", userId);
+  const existingSubsMap = new Map<string, Record<string, unknown>>();
+  for (const s of existingSubs ?? []) {
+    const overrides = s.user_overrides as Record<string, unknown> | null;
+    if (overrides && Object.keys(overrides).length > 0) {
+      existingSubsMap.set(`${s.service_brand}::${s.payment_source}`, overrides);
+    }
+  }
+
   // Fetch all events for user with required fields
   const { data: events, error } = await db
     .from("email_events")
@@ -74,10 +133,12 @@ export async function detectSubscriptions(userId: string): Promise<DetectResult>
     service_name_raw: string | null;
   })[];
 
-  // Group by (service_brand, payment_source)
+  // Group by (normalized_brand, payment_source)
   const groups = new Map<string, typeof eventsArray>();
   for (const ev of eventsArray) {
-    const brand = ev.service_brand ?? ev.service_name_raw ?? ev.sender_domain ?? "Unknown";
+    const rawBrand = ev.service_brand ?? ev.service_name_raw ?? ev.sender_domain ?? "Unknown";
+    // Normalize via alias table (e.g. "Claude" → "Anthropic")
+    const brand = NAME_CANONICAL[rawBrand.toLowerCase()] ?? rawBrand;
     const source = ev.payment_source ?? "direct";
     const key = `${brand}::${source}`;
     const arr = groups.get(key) ?? [];
@@ -88,8 +149,17 @@ export async function detectSubscriptions(userId: string): Promise<DetectResult>
   const result: DetectResult = { confirmed: 0, possible: 0, canceled: 0, trial: 0 };
 
   for (const [key, groupEvents] of groups) {
-    const [brand, paymentSource] = key.split("::");
+    let [brand, paymentSource] = key.split("::");
     if (!brand || brand === "Unknown") continue;
+
+    // Check dismissed patterns — skip or rename as appropriate
+    const dismissMatch = dismissedPatterns.find(
+      (p) => p.service_brand === brand && p.payment_source === paymentSource,
+    );
+    if (dismissMatch && dismissMatch.reason !== "wrong_merchant") continue;
+    if (dismissMatch?.reason === "wrong_merchant" && dismissMatch.canonical_brand) {
+      brand = dismissMatch.canonical_brand;
+    }
 
     const positives = groupEvents.filter(
       (e) => POSITIVE_EVENT_TYPES.has(e.event_type ?? ""),
@@ -101,11 +171,22 @@ export async function detectSubscriptions(userId: string): Promise<DetectResult>
 
     if (positives.length === 0 && !trial) continue;
 
-    // Determine cycle from positive event dates
+    // Skip groups where all positives are one-time purchases
+    const classifiedCycles = positives.map(
+      (e) =>
+        (e.raw_extract?.classified as { billing_cycle?: string } | undefined)?.billing_cycle ??
+        null,
+    );
+    const allOneTime =
+      positives.length > 0 &&
+      classifiedCycles.every((c) => c === "one_time");
+    if (allOneTime) continue;
+
+    // Determine cycle: prefer classifier votes, fall back to gap-based (needs ≥3 samples)
     const positiveDates = positives
       .map((e) => (e.sent_at ? new Date(e.sent_at).getTime() : NaN))
       .filter((n) => !Number.isNaN(n));
-    const { cycle, cycleDays } = detectCycle(positiveDates);
+    const { cycle, cycleDays } = detectCycle(positiveDates, classifiedCycles);
 
     // Pick latest event for representative amount/currency
     const latest = [...groupEvents].sort((a, b) => {
@@ -188,6 +269,23 @@ export async function detectSubscriptions(userId: string): Promise<DetectResult>
       .maybeSingle();
 
     if (upsertErr || !upserted) continue;
+
+    // Re-apply user_overrides so user edits survive rescans
+    const overrideKey = `${brandInfo.brand_name}::${paymentSource}`;
+    const overrides = existingSubsMap.get(overrideKey);
+    if (overrides && Object.keys(overrides).length > 0) {
+      const overrideUpdate: Record<string, unknown> = {};
+      if (overrides.brand_name) overrideUpdate.service_brand = overrides.brand_name;
+      if (overrides.billing_cycle) overrideUpdate.billing_cycle = overrides.billing_cycle;
+      if (overrides.amount != null) overrideUpdate.amount = overrides.amount;
+      if (overrides.currency) overrideUpdate.currency = overrides.currency;
+      if (overrides.category) overrideUpdate.category = overrides.category;
+      if (overrides.status) overrideUpdate.status = overrides.status;
+      if (overrides.next_renewal_date) overrideUpdate.next_renewal_date = overrides.next_renewal_date;
+      if (Object.keys(overrideUpdate).length > 0) {
+        await db.from("subscriptions").update(overrideUpdate).eq("id", upserted.id);
+      }
+    }
 
     // Replace evidence links
     await db.from("subscription_evidence").delete().eq("subscription_id", upserted.id);

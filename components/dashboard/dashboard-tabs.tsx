@@ -29,8 +29,10 @@ interface PossibleSub {
   amount: number | null;
   currency: string | null;
   billing_cycle: string | null;
+  next_renewal_date: string | null;
   brand_logo_url: string | null;
   category: string | null;
+  status: string;
 }
 
 interface DashboardTabsProps {

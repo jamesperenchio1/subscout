@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { THAILAND_BRANDS } from "@/lib/thailand";
+import { PROCESSOR_DOMAINS, DOMAIN_CANONICAL } from "./brand-aliases";
 
 // Free Brandfetch CDN — no API key needed for logo URLs
 function logoCdnUrl(domain: string): string {
@@ -64,40 +65,56 @@ export async function resolveBrand(
   const domain = senderDomain.toLowerCase();
   const db = supabaseAdmin();
 
-  // 1. Static map
-  if (DOMAIN_TO_BRAND[domain]) {
-    const name = DOMAIN_TO_BRAND[domain];
-    return {
-      brand_name: name,
-      logo_url: logoCdnUrl(domain),
-      category: KNOWN_CATEGORIES[name] ?? null,
-    };
+  // 0. If domain is a payment processor, skip to service_name_raw immediately
+  //    (Stripe/PayPal receipts should resolve to the merchant, not the processor)
+  if (!PROCESSOR_DOMAINS.has(domain)) {
+    // 1a. DOMAIN_CANONICAL aliases (higher priority than static map)
+    if (DOMAIN_CANONICAL[domain]) {
+      const name = DOMAIN_CANONICAL[domain];
+      return {
+        brand_name: name,
+        logo_url: logoCdnUrl(domain),
+        category: KNOWN_CATEGORIES[name] ?? null,
+      };
+    }
+
+    // 1b. Static map
+    if (DOMAIN_TO_BRAND[domain]) {
+      const name = DOMAIN_TO_BRAND[domain];
+      return {
+        brand_name: name,
+        logo_url: logoCdnUrl(domain),
+        category: KNOWN_CATEGORIES[name] ?? null,
+      };
+    }
+
+    // 2. brand_cache
+    const { data: cached } = await db
+      .from("brand_cache")
+      .select("brand_name, logo_url, category")
+      .eq("domain", domain)
+      .maybeSingle();
+    if (cached) {
+      return {
+        brand_name: cached.brand_name ?? serviceNameRaw ?? domain,
+        logo_url: cached.logo_url,
+        category: cached.category,
+      };
+    }
   }
 
-  // 2. brand_cache
-  const { data: cached } = await db
-    .from("brand_cache")
-    .select("brand_name, logo_url, category")
-    .eq("domain", domain)
-    .maybeSingle();
-  if (cached) {
-    return {
-      brand_name: cached.brand_name ?? serviceNameRaw ?? domain,
-      logo_url: cached.logo_url,
-      category: cached.category,
-    };
-  }
-
-  // 3. Fall back to raw extracted name + cache it for next time
+  // 3. Fall back to raw extracted name + cache it for next time (domain-based logo URL)
   const brand = serviceNameRaw?.trim() || domain.split(".")[0];
-  const logo = logoCdnUrl(domain);
-  await db.from("brand_cache").upsert({
-    domain,
-    brand_name: brand,
-    logo_url: logo,
-    category: null,
-  });
-  return { brand_name: brand, logo_url: logo, category: null };
+  const logoForDomain = PROCESSOR_DOMAINS.has(domain) ? null : logoCdnUrl(domain);
+  if (!PROCESSOR_DOMAINS.has(domain)) {
+    await db.from("brand_cache").upsert({
+      domain,
+      brand_name: brand,
+      logo_url: logoForDomain,
+      category: null,
+    });
+  }
+  return { brand_name: brand, logo_url: logoForDomain, category: null };
 }
 
 /**
