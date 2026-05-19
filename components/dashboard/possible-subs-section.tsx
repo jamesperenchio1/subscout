@@ -32,6 +32,7 @@ interface EvidenceEmail {
 function EvidenceToggle({ subId }: { subId: string }) {
   const [show, setShow] = useState(false);
   const [emails, setEmails] = useState<EvidenceEmail[] | null>(null);
+  const [googleEmail, setGoogleEmail] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   async function toggle() {
@@ -43,6 +44,7 @@ function EvidenceToggle({ subId }: { subId: string }) {
       const res = await fetch(`/api/subscriptions/${subId}/evidence`);
       const data = await res.json();
       setEmails(data.emails ?? []);
+      setGoogleEmail(data.google_email ?? null);
     } catch { setEmails([]); }
     finally { setLoading(false); }
   }
@@ -62,7 +64,7 @@ function EvidenceToggle({ subId }: { subId: string }) {
                 <p className="text-xs font-medium text-stone-800 line-clamp-1">{em.subject ?? "(no subject)"}</p>
                 {em.gmail_message_id && (
                   <a
-                    href={`https://mail.google.com/mail/u/0/#all/${em.gmail_message_id}`}
+                    href={`https://mail.google.com/mail/u/${encodeURIComponent(googleEmail ?? "0")}/#all/${em.gmail_message_id}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="shrink-0 text-[10px] font-semibold text-blue-600 hover:underline"

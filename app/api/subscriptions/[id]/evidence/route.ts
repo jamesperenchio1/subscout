@@ -32,6 +32,14 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     .maybeSingle();
   if (!sub) return new NextResponse("Not found", { status: 404 });
 
+  // Fetch the gmail account email so the frontend can build correct deep links
+  const { data: gmailAcc } = await db
+    .from("gmail_accounts")
+    .select("google_email")
+    .eq("user_id", userId)
+    .maybeSingle();
+  const googleEmail = gmailAcc?.google_email ?? null;
+
   const { data: evidenceRows } = await db
     .from("subscription_evidence")
     .select("email_events(id, subject, sender_email, sent_at, gmail_message_id, amount, currency, event_type, raw_extract)")
@@ -68,5 +76,5 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   emails.sort((a, b) => (b.sent_at ?? "").localeCompare(a.sent_at ?? ""));
 
-  return NextResponse.json({ emails });
+  return NextResponse.json({ emails, google_email: googleEmail });
 }

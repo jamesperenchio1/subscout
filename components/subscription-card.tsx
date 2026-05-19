@@ -63,6 +63,7 @@ export function SubscriptionCard({ sub }: { sub: Sub }) {
 
   const [showEvidence, setShowEvidence] = useState(false);
   const [evidence, setEvidence] = useState<EvidenceEmail[] | null>(null);
+  const [googleEmail, setGoogleEmail] = useState<string | null>(null);
   const [loadingEvidence, setLoadingEvidence] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
 
@@ -75,6 +76,7 @@ export function SubscriptionCard({ sub }: { sub: Sub }) {
       const res = await fetch(`/api/subscriptions/${sub.id}/evidence`);
       const data = await res.json();
       setEvidence(data.emails ?? []);
+      setGoogleEmail(data.google_email ?? null);
     } catch { setEvidence([]); }
     finally { setLoadingEvidence(false); }
   }
@@ -188,7 +190,7 @@ export function SubscriptionCard({ sub }: { sub: Sub }) {
                 </p>
                 {em.gmail_message_id && (
                   <a
-                    href={`https://mail.google.com/mail/u/0/#all/${em.gmail_message_id}`}
+                    href={`https://mail.google.com/mail/u/${encodeURIComponent(googleEmail ?? "0")}/#all/${em.gmail_message_id}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="shrink-0 text-[10px] font-semibold text-blue-600 hover:underline"
