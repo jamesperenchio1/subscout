@@ -1,24 +1,16 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth, signOut } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
 import { encrypt } from "@/lib/crypto";
-import { SubscriptionCard } from "@/components/subscription-card";
 import { FirstScanPanel } from "@/components/first-scan-panel";
-import { PossibleSubsSection } from "@/components/dashboard/possible-subs-section";
+import { DashboardTabs } from "@/components/dashboard/dashboard-tabs";
 import { formatMoney, monthlyAmount, daysUntil } from "@/lib/format";
 import { HOME_CURRENCY } from "@/lib/thailand";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
-export default async function Dashboard({
-  searchParams,
-}: {
-  searchParams: Promise<{ tab?: string }>;
-}) {
-  const { tab } = await searchParams;
-  const activeTab = tab === "one-offs" ? "one-offs" : "active";
+export default async function Dashboard() {
 
   const session = await auth();
   const userId = (session?.user as { id?: string } | undefined)?.id;
@@ -178,106 +170,13 @@ export default async function Dashboard({
               </div>
             </section>
 
-            {/* Tab bar */}
-            <div className="flex gap-1 rounded-2xl border border-stone-200 bg-white p-1 w-fit">
-              <Link
-                href="/dashboard"
-                className={`rounded-xl px-5 py-2 text-sm font-semibold transition-colors ${
-                  activeTab === "active"
-                    ? "bg-stone-950 text-white"
-                    : "text-stone-600 hover:text-stone-950"
-                }`}
-              >
-                Active{active.length > 0 ? ` (${active.length})` : ""}
-              </Link>
-              <Link
-                href="/dashboard?tab=one-offs"
-                className={`rounded-xl px-5 py-2 text-sm font-semibold transition-colors ${
-                  activeTab === "one-offs"
-                    ? "bg-stone-950 text-white"
-                    : "text-stone-600 hover:text-stone-950"
-                }`}
-              >
-                One-offs{possible.length > 0 ? ` (${possible.length})` : ""}
-              </Link>
-            </div>
-
-            {activeTab === "active" ? (
-              <section className="grid gap-4 lg:grid-cols-[280px_1fr]">
-                <aside className="space-y-4">
-                  <div className="rounded-2xl border border-stone-200 bg-white p-5">
-                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">Categories</p>
-                    <div className="mt-4 space-y-3">
-                      {topCategories.length ? topCategories.map(([category, data]) => (
-                        <div key={category}>
-                          <div className="flex justify-between text-sm">
-                            <span className="font-medium capitalize">{category}</span>
-                            <span className="text-stone-500">{data.count}</span>
-                          </div>
-                          <div className="mt-1 h-2 overflow-hidden rounded-full bg-stone-100">
-                            <div
-                              className="h-full rounded-full bg-lime-300"
-                              style={{ width: `${Math.max(12, Math.min(100, data.monthly))}%` }}
-                            />
-                          </div>
-                        </div>
-                      )) : (
-                        <p className="text-sm text-stone-500">Categories appear after scan.</p>
-                      )}
-                    </div>
-                  </div>
-                  <div className="rounded-2xl border border-stone-200 bg-white p-5">
-                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">How detection works</p>
-                    <p className="mt-3 text-sm leading-6 text-stone-600">
-                      Each billing email is embedded locally and clustered with similar emails. A cluster becomes a subscription only when we see 2+ matching charges or an explicit confirmation.
-                    </p>
-                  </div>
-                  {canceled.length > 0 && (
-                    <div className="rounded-2xl border border-stone-200 bg-white p-5">
-                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">Past subscriptions</p>
-                      <p className="mt-2 text-sm text-stone-600">{canceled.length} canceled or expired</p>
-                    </div>
-                  )}
-                </aside>
-
-                <div>
-                  <div className="mb-4 flex items-end justify-between gap-4">
-                    <div>
-                      <p className="text-sm font-semibold text-stone-500">Confirmed subscriptions</p>
-                      <h2 className="text-2xl font-semibold tracking-tight">Recurring spend</h2>
-                    </div>
-                    <Link
-                      href="/subscriptions"
-                      className="text-sm font-semibold text-stone-700 underline-offset-2 hover:underline"
-                    >
-                      View all →
-                    </Link>
-                  </div>
-                  {active.length === 0 ? (
-                    <EmptyState />
-                  ) : (
-                    <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                      {active.map((s) => (
-                        <SubscriptionCard key={s.id} sub={s} />
-                      ))}
-                    </section>
-                  )}
-                </div>
-              </section>
-            ) : (
-              <div>
-                {possible.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-stone-300 bg-white p-12 text-center">
-                    <h2 className="text-lg font-semibold">No one-offs found</h2>
-                    <p className="mx-auto mt-2 max-w-md text-sm text-stone-600">
-                      Single billing events that don&apos;t repeat will appear here.
-                    </p>
-                  </div>
-                ) : (
-                  <PossibleSubsSection subs={possible} />
-                )}
-              </div>
-            )}
+            <DashboardTabs
+              activeSubs={active}
+              possibleSubs={possible}
+              canceledCount={canceled.length}
+              topCategories={topCategories}
+              homeCurrency={HOME_CURRENCY}
+            />
           </>
         )}
       </main>
@@ -285,16 +184,6 @@ export default async function Dashboard({
   );
 }
 
-function EmptyState() {
-  return (
-    <div className="rounded-2xl border border-dashed border-stone-300 bg-white p-12 text-center">
-      <h2 className="text-lg font-semibold">No confirmed subscriptions yet</h2>
-      <p className="mx-auto mt-2 max-w-md text-sm text-stone-600">
-        We didn&apos;t see 2+ matching charges for any service. Check the &ldquo;One-offs&rdquo; tab or rescan once more billing arrives.
-      </p>
-    </div>
-  );
-}
 
 function Signal({ label, value }: { label: string; value: string }) {
   return (

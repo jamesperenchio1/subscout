@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { formatMoney, daysUntil } from "@/lib/format";
 
 interface Sub {
@@ -41,11 +42,40 @@ function paymentLabel(source: string): string {
   return PAYMENT_SOURCE_LABEL[source] ?? source;
 }
 
+interface EvidenceEmail {
+  id: string;
+  subject: string | null;
+  sender_email: string | null;
+  sent_at: string | null;
+  gmail_message_id: string | null;
+  amount: number | null;
+  currency: string | null;
+  event_type: string | null;
+  snippet: string | null;
+}
+
 export function SubscriptionCard({ sub }: { sub: Sub }) {
   const cat = sub.category ?? "other";
   const days = sub.next_renewal_date ? daysUntil(sub.next_renewal_date) : null;
   const isFailed = sub.status === "payment_failed";
   const isTrial = sub.status === "trial";
+
+  const [showEvidence, setShowEvidence] = useState(false);
+  const [evidence, setEvidence] = useState<EvidenceEmail[] | null>(null);
+  const [loadingEvidence, setLoadingEvidence] = useState(false);
+
+  async function toggleEvidence() {
+    if (showEvidence) { setShowEvidence(false); return; }
+    setShowEvidence(true);
+    if (evidence !== null) return;
+    setLoadingEvidence(true);
+    try {
+      const res = await fetch(`/api/subscriptions/${sub.id}/evidence`);
+      const data = await res.json();
+      setEvidence(data.emails ?? []);
+    } catch { setEvidence([]); }
+    finally { setLoadingEvidence(false); }
+  }
 
   return (
     <article className={`flex flex-col rounded-2xl border bg-white p-5 ${isFailed ? "border-red-300" : isTrial ? "border-amber-300" : "border-stone-200"}`}>
@@ -117,6 +147,49 @@ export function SubscriptionCard({ sub }: { sub: Sub }) {
         >
           Cancel subscription →
         </a>
+      )}
+
+      <button
+        onClick={toggleEvidence}
+        className="mt-3 text-xs font-medium text-stone-400 hover:text-stone-700 text-left"
+      >
+        {showEvidence ? "Hide proof" : "See proof →"}
+      </button>
+
+      {showEvidence && (
+        <div className="mt-2 space-y-2">
+          {loadingEvidence && <p className="text-xs text-stone-400">Loading…</p>}
+          {!loadingEvidence && evidence?.length === 0 && (
+            <p className="text-xs text-stone-400">No linked emails found.</p>
+          )}
+          {evidence?.map((em) => (
+            <div key={em.id} className="rounded-xl border border-stone-100 bg-stone-50 p-3">
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-xs font-medium text-stone-800 leading-snug line-clamp-2">
+                  {em.subject ?? "(no subject)"}
+                </p>
+                {em.gmail_message_id && (
+                  <a
+                    href={`https://mail.google.com/mail/u/0/#all/${em.gmail_message_id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="shrink-0 text-[10px] font-semibold text-blue-600 hover:underline"
+                  >
+                    Open ↗
+                  </a>
+                )}
+              </div>
+              <p className="mt-1 text-[10px] text-stone-500">
+                {em.sender_email} · {em.sent_at ? new Date(em.sent_at).toLocaleDateString() : "?"}
+                {em.amount != null ? ` · ${formatMoney(em.amount, em.currency ?? "USD")}` : ""}
+                {em.event_type ? ` · ${em.event_type}` : ""}
+              </p>
+              {em.snippet && (
+                <p className="mt-1 text-[10px] text-stone-400 line-clamp-2">{em.snippet}</p>
+              )}
+            </div>
+          ))}
+        </div>
       )}
     </article>
   );
