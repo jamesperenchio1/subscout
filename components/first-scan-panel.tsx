@@ -156,7 +156,7 @@ export function FirstScanPanel() {
               onClick={() => {
                 doneRef.current = false;
                 setDone(false);
-                setProgress({ current: 0, total: 0 });
+                setProgress({ current: 0, total: 0, filtered: 0 });
                 setFound(0);
                 setLogs([]);
                 setError(false);
