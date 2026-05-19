@@ -27,11 +27,13 @@ interface EvidenceEmail {
   amount: number | null;
   currency: string | null;
   snippet: string | null;
+  source_email: string | null;
 }
 
 function EvidenceToggle({ subId }: { subId: string }) {
   const [show, setShow] = useState(false);
   const [emails, setEmails] = useState<EvidenceEmail[] | null>(null);
+  const [sourceEmails, setSourceEmails] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
 
   async function toggle() {
@@ -43,6 +45,7 @@ function EvidenceToggle({ subId }: { subId: string }) {
       const res = await fetch(`/api/subscriptions/${subId}/evidence`);
       const data = await res.json();
       setEmails(data.emails ?? []);
+      setSourceEmails(data.source_emails ?? []);
     } catch { setEmails([]); }
     finally { setLoading(false); }
   }
@@ -56,13 +59,18 @@ function EvidenceToggle({ subId }: { subId: string }) {
         <div className="mt-2 space-y-1.5">
           {loading && <p className="text-xs text-stone-400">Loading…</p>}
           {!loading && emails?.length === 0 && <p className="text-xs text-stone-400">No emails found.</p>}
+          {sourceEmails.length > 1 && (
+            <p className="text-[10px] font-medium text-stone-500">
+              Sourced from {sourceEmails.length} inboxes: {sourceEmails.join(", ")}
+            </p>
+          )}
           {emails?.map((em) => (
             <div key={em.id} className="rounded-lg border border-stone-100 bg-stone-50 p-2">
               <div className="flex items-start justify-between gap-2">
                 <p className="text-xs font-medium text-stone-800 line-clamp-1">{em.subject ?? "(no subject)"}</p>
                 {em.gmail_message_id && (
                   <a
-                    href={`https://mail.google.com/mail/u/0/#all/${em.gmail_message_id}`}
+                    href={`https://mail.google.com/mail/u/${encodeURIComponent(em.source_email ?? "0")}/#all/${em.gmail_message_id}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="shrink-0 text-[10px] font-semibold text-blue-600 hover:underline"
@@ -73,6 +81,7 @@ function EvidenceToggle({ subId }: { subId: string }) {
               </div>
               <p className="text-[10px] text-stone-400">
                 {em.sender_email} · {em.sent_at ? new Date(em.sent_at).toLocaleDateString() : "?"}
+                {sourceEmails.length > 1 && em.source_email ? ` · ${em.source_email}` : ""}
               </p>
             </div>
           ))}

@@ -53,6 +53,7 @@ interface EvidenceEmail {
   currency: string | null;
   event_type: string | null;
   snippet: string | null;
+  source_email: string | null;
 }
 
 export function SubscriptionCard({ sub }: { sub: Sub }) {
@@ -63,6 +64,7 @@ export function SubscriptionCard({ sub }: { sub: Sub }) {
 
   const [showEvidence, setShowEvidence] = useState(false);
   const [evidence, setEvidence] = useState<EvidenceEmail[] | null>(null);
+  const [sourceEmails, setSourceEmails] = useState<string[]>([]);
   const [loadingEvidence, setLoadingEvidence] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
 
@@ -75,6 +77,7 @@ export function SubscriptionCard({ sub }: { sub: Sub }) {
       const res = await fetch(`/api/subscriptions/${sub.id}/evidence`);
       const data = await res.json();
       setEvidence(data.emails ?? []);
+      setSourceEmails(data.source_emails ?? []);
     } catch { setEvidence([]); }
     finally { setLoadingEvidence(false); }
   }
@@ -180,6 +183,11 @@ export function SubscriptionCard({ sub }: { sub: Sub }) {
           {!loadingEvidence && evidence?.length === 0 && (
             <p className="text-xs text-stone-400">No linked emails found.</p>
           )}
+          {sourceEmails.length > 1 && (
+            <p className="text-[10px] font-medium text-stone-500">
+              Sourced from {sourceEmails.length} inboxes: {sourceEmails.join(", ")}
+            </p>
+          )}
           {evidence?.map((em) => (
             <div key={em.id} className="rounded-xl border border-stone-100 bg-stone-50 p-3">
               <div className="flex items-start justify-between gap-2">
@@ -188,7 +196,7 @@ export function SubscriptionCard({ sub }: { sub: Sub }) {
                 </p>
                 {em.gmail_message_id && (
                   <a
-                    href={`https://mail.google.com/mail/u/0/#all/${em.gmail_message_id}`}
+                    href={`https://mail.google.com/mail/u/${encodeURIComponent(em.source_email ?? "0")}/#all/${em.gmail_message_id}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="shrink-0 text-[10px] font-semibold text-blue-600 hover:underline"
@@ -201,6 +209,7 @@ export function SubscriptionCard({ sub }: { sub: Sub }) {
                 {em.sender_email} · {em.sent_at ? new Date(em.sent_at).toLocaleDateString() : "?"}
                 {em.amount != null ? ` · ${formatMoney(em.amount, em.currency ?? "USD")}` : ""}
                 {em.event_type ? ` · ${em.event_type}` : ""}
+                {sourceEmails.length > 1 && em.source_email ? ` · ${em.source_email}` : ""}
               </p>
               {em.snippet && (
                 <p className="mt-1 text-[10px] text-stone-400 line-clamp-2">{em.snippet}</p>

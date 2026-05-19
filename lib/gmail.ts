@@ -99,6 +99,17 @@ export interface FullMessage extends MessageHeaders {
   internalDate: number;
 }
 
+function decodeHtmlEntities(str: string): string {
+  return str
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&nbsp;/g, " ");
+}
+
 export async function getFullMessage(gmail: gmail_v1.Gmail, id: string, maxBodyChars = 5000): Promise<FullMessage> {
   const res = await gmail.users.messages.get({ userId: "me", id, format: "full" });
   const headers = res.data.payload?.headers;
@@ -107,7 +118,7 @@ export async function getFullMessage(gmail: gmail_v1.Gmail, id: string, maxBodyC
     subject: headerValue(headers, "Subject"),
     from: headerValue(headers, "From"),
     date: headerValue(headers, "Date"),
-    snippet: res.data.snippet ?? "",
+    snippet: decodeHtmlEntities(res.data.snippet ?? ""),
     body: extractPlainText(res.data.payload).slice(0, maxBodyChars),
     internalDate: Number(res.data.internalDate ?? 0),
   };

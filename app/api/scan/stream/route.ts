@@ -55,7 +55,7 @@ export async function GET() {
 
         let { data: accounts } = await db
           .from("gmail_accounts")
-          .select("id, user_id, google_email, refresh_token_encrypted")
+          .select("id, user_id, google_email, refresh_token_encrypted, is_enabled, connection_status")
           .eq("user_id", userId);
 
         if (!accounts?.length) {
@@ -89,7 +89,7 @@ export async function GET() {
               },
               { onConflict: "user_id,google_email" },
             )
-            .select("id, user_id, google_email, refresh_token_encrypted");
+            .select("id, user_id, google_email, refresh_token_encrypted, is_enabled, connection_status");
 
           if (upsertErr) {
             const msg = `Failed to save Gmail account: ${upsertErr.message}`;
@@ -102,28 +102,55 @@ export async function GET() {
           accounts = created;
         }
 
-        const account = accounts?.[0];
-        if (!account) {
-          const msg = "Could not create Gmail account record — accounts list empty after upsert.";
-          console.error(`[scan] ${msg}`);
-          send({ type: "error", message: msg });
+        // Iterate every enabled, non-disconnected account
+        const scanList = (accounts ?? []).filter(
+          (a) => a.is_enabled !== false && a.connection_status !== "disconnected",
+        );
+        if (!scanList.length) {
+          send({ type: "error", message: "No enabled Gmail accounts. Enable one in Settings." });
           controller.close();
           return;
         }
 
-        console.log(`[scan] running scan for gmail=${account.google_email}`);
+        for (const account of scanList) {
+          send({ type: "stage", stage: "account", message: `Scanning ${account.google_email}…` });
+          console.log(`[scan] running scan for gmail=${account.google_email}`);
 
-        await runScan(
-          {
-            id: account.id,
-            user_id: account.user_id,
-            google_email: account.google_email,
-            google_refresh_token: account.refresh_token_encrypted,
-          },
-          send,
-        );
-
-        console.log(`[scan] completed for gmail=${account.google_email}`);
+          try {
+            await runScan(
+              {
+                id: account.id,
+                user_id: account.user_id,
+                google_email: account.google_email,
+                google_refresh_token: account.refresh_token_encrypted,
+              },
+              send,
+            );
+            await db
+              .from("gmail_accounts")
+              .update({
+                last_synced_at: new Date().toISOString(),
+                connection_status: "connected",
+              })
+              .eq("id", account.id);
+            console.log(`[scan] completed for gmail=${account.google_email}`);
+          } catch (perAccountErr) {
+            const msg = String(perAccountErr);
+            if (msg.includes("invalid_grant") || msg.includes("401") || msg.includes("403")) {
+              await db
+                .from("gmail_accounts")
+                .update({ connection_status: "needs_reauth" })
+                .eq("id", account.id);
+              send({
+                type: "stage",
+                stage: "account",
+                message: `${account.google_email} needs to be reconnected — skipping`,
+              });
+              continue;
+            }
+            throw perAccountErr;
+          }
+        }
       } catch (err) {
         const message = err instanceof Error
           ? `${err.message}\n${err.stack ?? ""}`
