@@ -99,8 +99,10 @@ Body: ${input.body.slice(0, 5000)}`;
 }
 
 /**
- * For each cluster of unclassified email_events for this user, pick the longest-body
- * representative email, send to Groq, then apply the result to every event in the cluster.
+ * Classify each unclassified email event individually.
+ * Per-event classification prevents payment-processor domain grouping errors
+ * (e.g. all stripe.com emails getting the same "Stripe" classification when
+ * they're actually receipts for different merchants).
  */
 export async function classifyClusters(
   userId: string,
@@ -109,74 +111,53 @@ export async function classifyClusters(
 ): Promise<{ classified: number }> {
   const db = supabaseAdmin();
 
-  // Find clusters with at least one event missing event_type
   const { data: events, error } = await db
     .from("email_events")
-    .select("id, cluster_id, subject, sender_email, sent_at, raw_extract, event_type")
+    .select("id, subject, sender_email, sent_at, raw_extract")
     .eq("user_id", userId)
-    .not("cluster_id", "is", null);
+    .is("event_type", null);
   if (error) throw error;
   if (!events?.length) return { classified: 0 };
 
-  // Group by cluster
-  const byCluster = new Map<string, typeof events>();
-  for (const ev of events) {
-    const arr = byCluster.get(ev.cluster_id!) ?? [];
-    arr.push(ev);
-    byCluster.set(ev.cluster_id!, arr);
-  }
-
-  // For clusters that already have all events classified, skip
-  const clusters = Array.from(byCluster.entries()).filter(
-    ([, evs]) => evs.some((e) => !e.event_type),
+  // Only process events that have a stored body
+  const toClassify = events.filter(
+    (ev) => (ev.raw_extract as { body?: string } | null)?.body,
   );
 
   let classified = 0;
-  let done = 0;
-  for (const [clusterId, clusterEvents] of clusters) {
-    // Need full raw body — we stored it in raw_extract.body for this purpose? We didn't.
-    // Refetch the longest representative email's body from raw_extract or skip.
-    // For now we re-pull via a helper: caller provides body via raw_extract field.
-    // Pick longest-subject as rep (proxy for richest email).
-    const rep = clusterEvents.reduce((a, b) =>
-      (a.subject?.length ?? 0) >= (b.subject?.length ?? 0) ? a : b,
-    );
+  for (let i = 0; i < toClassify.length; i++) {
+    const ev = toClassify[i];
+    const body = (ev.raw_extract as { body?: string }).body!;
 
-    const repBody = (rep.raw_extract as { body?: string } | null)?.body ?? "";
     const result = await classifyEmail({
-      subject: rep.subject ?? "",
-      from: rep.sender_email ?? "",
-      date: rep.sent_at ?? "",
-      body: repBody,
+      subject: ev.subject ?? "",
+      from: ev.sender_email ?? "",
+      date: ev.sent_at ?? "",
+      body,
       recipientEmail,
     });
-    await new Promise((r) => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, 80));
 
     if (!result) {
-      done++;
-      onProgress?.(done, clusters.length);
+      onProgress?.(i + 1, toClassify.length);
       continue;
     }
 
-    // Apply to all events in cluster
-    const update = {
-      event_type: result.event_type ?? "other",
-      service_name_raw: result.service_name_raw ?? null,
-      amount: result.amount ?? null,
-      currency: result.currency ?? null,
-      payment_source: result.payment_source ?? "direct",
-      confidence: result.confidence ?? null,
-      raw_extract: { ...((rep.raw_extract as object) ?? {}), classified: result },
-    };
     const { error: updateErr } = await db
       .from("email_events")
-      .update(update)
-      .eq("cluster_id", clusterId)
-      .eq("user_id", userId);
-    if (!updateErr) classified += clusterEvents.length;
+      .update({
+        event_type: result.event_type ?? "other",
+        service_name_raw: result.service_name_raw ?? null,
+        amount: result.amount ?? null,
+        currency: result.currency ?? null,
+        payment_source: result.payment_source ?? "direct",
+        confidence: result.confidence ?? null,
+        raw_extract: { ...((ev.raw_extract as object) ?? {}), classified: result },
+      })
+      .eq("id", ev.id);
+    if (!updateErr) classified++;
 
-    done++;
-    onProgress?.(done, clusters.length);
+    onProgress?.(i + 1, toClassify.length);
   }
 
   return { classified };

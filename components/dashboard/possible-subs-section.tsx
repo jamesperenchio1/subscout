@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { formatMoney } from "@/lib/format";
 
 interface PossibleSub {
@@ -11,6 +12,70 @@ interface PossibleSub {
   billing_cycle: string | null;
   brand_logo_url: string | null;
   category: string | null;
+}
+
+interface EvidenceEmail {
+  id: string;
+  subject: string | null;
+  sender_email: string | null;
+  sent_at: string | null;
+  gmail_message_id: string | null;
+  amount: number | null;
+  currency: string | null;
+  snippet: string | null;
+}
+
+function EvidenceToggle({ subId }: { subId: string }) {
+  const [show, setShow] = useState(false);
+  const [emails, setEmails] = useState<EvidenceEmail[] | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function toggle() {
+    if (show) { setShow(false); return; }
+    setShow(true);
+    if (emails !== null) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/subscriptions/${subId}/evidence`);
+      const data = await res.json();
+      setEmails(data.emails ?? []);
+    } catch { setEmails([]); }
+    finally { setLoading(false); }
+  }
+
+  return (
+    <div>
+      <button onClick={toggle} className="mt-2 text-xs font-medium text-stone-400 hover:text-stone-700">
+        {show ? "Hide proof" : "See proof →"}
+      </button>
+      {show && (
+        <div className="mt-2 space-y-1.5">
+          {loading && <p className="text-xs text-stone-400">Loading…</p>}
+          {!loading && emails?.length === 0 && <p className="text-xs text-stone-400">No emails found.</p>}
+          {emails?.map((em) => (
+            <div key={em.id} className="rounded-lg border border-stone-100 bg-stone-50 p-2">
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-xs font-medium text-stone-800 line-clamp-1">{em.subject ?? "(no subject)"}</p>
+                {em.gmail_message_id && (
+                  <a
+                    href={`https://mail.google.com/mail/u/0/#all/${em.gmail_message_id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="shrink-0 text-[10px] font-semibold text-blue-600 hover:underline"
+                  >
+                    Open ↗
+                  </a>
+                )}
+              </div>
+              <p className="text-[10px] text-stone-400">
+                {em.sender_email} · {em.sent_at ? new Date(em.sent_at).toLocaleDateString() : "?"}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function PossibleSubsSection({ subs }: { subs: PossibleSub[] }) {
@@ -67,6 +132,7 @@ export function PossibleSubsSection({ subs }: { subs: PossibleSub[] }) {
                 </button>
               </form>
             </div>
+            <EvidenceToggle subId={sub.id} />
           </article>
         ))}
       </div>
