@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
+type GmailAccLite = { google_email: string | null } | { google_email: string | null }[] | null;
 type EvRow = {
   id: string;
   subject: string | null;
@@ -14,7 +15,14 @@ type EvRow = {
   currency: string | null;
   event_type: string | null;
   raw_extract: Record<string, unknown> | null;
+  gmail_accounts: GmailAccLite;
 };
+
+function pickAccountEmail(g: GmailAccLite): string | null {
+  if (!g) return null;
+  if (Array.isArray(g)) return g[0]?.google_email ?? null;
+  return g.google_email ?? null;
+}
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
@@ -32,17 +40,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     .maybeSingle();
   if (!sub) return new NextResponse("Not found", { status: 404 });
 
-  // Fetch the gmail account email so the frontend can build correct deep links
-  const { data: gmailAcc } = await db
-    .from("gmail_accounts")
-    .select("google_email")
-    .eq("user_id", userId)
-    .maybeSingle();
-  const googleEmail = gmailAcc?.google_email ?? null;
-
   const { data: evidenceRows } = await db
     .from("subscription_evidence")
-    .select("email_events(id, subject, sender_email, sent_at, gmail_message_id, amount, currency, event_type, raw_extract)")
+    .select(
+      "email_events(id, subject, sender_email, sent_at, gmail_message_id, amount, currency, event_type, raw_extract, gmail_accounts(google_email))",
+    )
     .eq("subscription_id", id);
 
   const emails: {
@@ -55,6 +57,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     currency: string | null;
     event_type: string | null;
     snippet: string | null;
+    source_email: string | null;
   }[] = [];
 
   for (const row of evidenceRows ?? []) {
@@ -71,10 +74,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       currency: ev.currency,
       event_type: ev.event_type,
       snippet: (ev.raw_extract?.snippet as string | undefined) ?? null,
+      source_email: pickAccountEmail(ev.gmail_accounts),
     });
   }
 
   emails.sort((a, b) => (b.sent_at ?? "").localeCompare(a.sent_at ?? ""));
 
-  return NextResponse.json({ emails, google_email: googleEmail });
+  const sourceEmails = Array.from(new Set(emails.map((e) => e.source_email).filter(Boolean) as string[]));
+  return NextResponse.json({ emails, source_emails: sourceEmails });
 }

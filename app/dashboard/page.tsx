@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { auth, signOut } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
 import { encrypt } from "@/lib/crypto";
@@ -120,6 +121,17 @@ export default async function Dashboard() {
           </div>
           <div className="flex min-w-0 items-center gap-3 text-sm text-stone-600">
             <span className="hidden truncate sm:inline">{session.user?.email}</span>
+            {(accounts?.length ?? 0) > 1 && (
+              <span className="hidden rounded-full bg-stone-100 px-2 py-0.5 text-xs font-medium text-stone-700 sm:inline">
+                {accounts!.length} inboxes
+              </span>
+            )}
+            <Link
+              href="/settings"
+              className="rounded-full border border-stone-300 px-3 py-1.5 font-medium hover:bg-stone-100"
+            >
+              Settings
+            </Link>
             {!needsScan && (
               <form action={rescan}>
                 <button className="rounded-full border border-stone-300 px-3 py-1.5 font-medium hover:bg-stone-100">
