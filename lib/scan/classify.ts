@@ -133,16 +133,18 @@ export async function classifyClusters(
 
   const { data: events, error } = await db
     .from("email_events")
-    .select("id, subject, sender_email, sent_at, raw_extract")
+    .select("id, subject, sender_email, sent_at, raw_extract, rule_verdict")
     .eq("user_id", userId)
     .is("event_type", null);
   if (error) throw error;
   if (!events?.length) return { classified: 0 };
 
-  // Only process events that have a stored body
-  const toClassify = events.filter(
-    (ev) => (ev.raw_extract as { body?: string } | null)?.body,
-  );
+  // Only send needs_llm events to Groq (known_sub/known_retailer_oneoff are pre-classified)
+  const toClassify = events.filter((ev) => {
+    const rv = (ev as { rule_verdict?: string | null }).rule_verdict;
+    const hasBody = !!(ev.raw_extract as { body?: string } | null)?.body;
+    return hasBody && (rv === "needs_llm" || rv === null);
+  });
 
   let classified = 0;
   for (let i = 0; i < toClassify.length; i++) {

@@ -2,6 +2,7 @@ import { gmailClient, listBillingMessageIds, getFullMessage, getMessageMetadata,
 import { parsePdfBuffer } from "./pdf-parser";
 import { shouldProcessEmail } from "@/lib/heuristic";
 import { supabaseAdmin } from "@/lib/supabase";
+import { applyRules } from "./rules";
 import { classifyClusters } from "./classify";
 import { enrichUnresolvedEvents } from "./enrich";
 import { detectSubscriptions } from "./trend";
@@ -134,9 +135,19 @@ export async function runScan(
       }
     }
 
+    // Rules engine — runs after we have the full body
+    const verdict = applyRules({
+      subject: full.subject ?? "",
+      senderDomain,
+      snippet: full.snippet ?? "",
+      body,
+    });
+    if (verdict === "skip") continue;
+
     const rawExtract: Record<string, unknown> = {
       body,
       snippet: full.snippet,
+      rule_verdict: verdict,
     };
     if (pdfMeta.length > 0) rawExtract.pdf_attachments = pdfMeta;
 
@@ -149,6 +160,7 @@ export async function runScan(
       sender_domain: senderDomain,
       sent_at: sentAt,
       raw_extract: rawExtract,
+      rule_verdict: verdict,
       ...(pdfParseStatus ? { pdf_parse_status: pdfParseStatus } : {}),
     });
     if (insertErr) {
