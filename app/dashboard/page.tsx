@@ -134,7 +134,7 @@ export default async function Dashboard() {
     // Reset email classifications so the improved Groq prompt re-runs on existing emails
     await db
       .from("email_events")
-      .update({ event_type: null, service_name_raw: null, service_brand: null, cluster_id: null })
+      .update({ event_type: null, service_name_raw: null, service_brand: null })
       .eq("user_id", uid);
     redirect("/dashboard");
   }

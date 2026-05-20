@@ -2,7 +2,6 @@ import { gmailClient, listBillingMessageIds, getFullMessage, getMessageMetadata,
 import { parsePdfBuffer } from "./pdf-parser";
 import { shouldProcessEmail } from "@/lib/heuristic";
 import { supabaseAdmin } from "@/lib/supabase";
-import { clusterPendingEvents } from "./cluster";
 import { classifyClusters } from "./classify";
 import { enrichUnresolvedEvents } from "./enrich";
 import { detectSubscriptions } from "./trend";
@@ -168,16 +167,8 @@ export async function runScan(
     .update({ scanned_through_date: scannedThroughDate })
     .eq("id", account.id);
 
-  // ── 3. Cluster by sender domain ─────────────────────────────────────────
-  log({ type: "stage", stage: "cluster", message: "Grouping emails by sender domain…" });
-  console.log("[scan] stage 3: clustering");
-  t = Date.now();
-  const clusterRes = await clusterPendingEvents(account.user_id);
-  console.log(`[scan] stage 3 done: ${clusterRes.assigned} events in ${clusterRes.clusters} clusters (${elapsed(t)})`);
-  log({ type: "stage", stage: "cluster", message: `${clusterRes.assigned} events grouped into ${clusterRes.clusters} clusters (${elapsed(t)})` });
-
-  // ── 4. Classify ─────────────────────────────────────────────────────────
-  log({ type: "stage", stage: "classify", message: "Classifying clusters with Groq…" });
+  // ── 3. Classify ─────────────────────────────────────────────────────────
+  log({ type: "stage", stage: "classify", message: "Classifying emails with Groq…" });
   console.log("[scan] stage 4: Groq classification");
   t = Date.now();
   await classifyClusters(account.user_id, account.google_email, (done, total) => {

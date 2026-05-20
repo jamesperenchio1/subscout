@@ -45,6 +45,7 @@ export function AccountsPanel({ initialAccounts }: Props) {
     const connected = params.get("connected");
     const error = params.get("error");
     if (connected) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setBanner({ kind: "ok", msg: `Connected ${connected}` });
     } else if (error) {
       const msgs: Record<string, string> = {
@@ -125,6 +126,7 @@ export function AccountsPanel({ initialAccounts }: Props) {
 
   // Auto-refresh after redirect-back so the new account shows up immediately
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (params.get("connected")) refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

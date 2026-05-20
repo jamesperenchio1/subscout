@@ -4,7 +4,6 @@ import { NAME_CANONICAL } from "./brand-aliases";
 
 interface EventRow {
   id: string;
-  cluster_id: string | null;
   event_type: string | null;
   service_brand: string | null;
   amount: number | null;
@@ -123,7 +122,7 @@ export async function detectSubscriptions(userId: string): Promise<DetectResult>
   const { data: events, error } = await db
     .from("email_events")
     .select(
-      "id, cluster_id, event_type, service_brand, amount, currency, payment_source, sent_at, confidence, raw_extract, sender_domain, service_name_raw",
+      "id, event_type, service_brand, amount, currency, payment_source, sent_at, confidence, raw_extract, sender_domain, service_name_raw",
     )
     .eq("user_id", userId);
   if (error) throw error;
@@ -149,7 +148,9 @@ export async function detectSubscriptions(userId: string): Promise<DetectResult>
   const result: DetectResult = { confirmed: 0, possible: 0, canceled: 0, trial: 0 };
 
   for (const [key, groupEvents] of groups) {
-    let [brand, paymentSource] = key.split("::");
+    const parts = key.split("::");
+    let brand = parts[0];
+    const paymentSource = parts[1];
     if (!brand || brand === "Unknown") continue;
 
     // Check dismissed patterns — skip or rename as appropriate
