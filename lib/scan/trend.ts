@@ -1,6 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolveBrand } from "./enrich";
-import { NAME_CANONICAL } from "./brand-aliases";
+import { normalizeBrandName, lookupByDomain } from "./brands";
 
 interface EventRow {
   id: string;
@@ -136,8 +136,9 @@ export async function detectSubscriptions(userId: string): Promise<DetectResult>
   const groups = new Map<string, typeof eventsArray>();
   for (const ev of eventsArray) {
     const rawBrand = ev.service_brand ?? ev.service_name_raw ?? ev.sender_domain ?? "Unknown";
-    // Normalize via alias table (e.g. "Claude" → "Anthropic")
-    const brand = NAME_CANONICAL[rawBrand.toLowerCase()] ?? rawBrand;
+    // Prefer brand from BRANDS table; fall back to normalizeBrandName for raw classifier output
+    const domainRecord = ev.sender_domain ? lookupByDomain(ev.sender_domain) : null;
+    const brand = domainRecord?.brand ?? normalizeBrandName(rawBrand);
     const source = ev.payment_source ?? "direct";
     const key = `${brand}::${source}`;
     const arr = groups.get(key) ?? [];
