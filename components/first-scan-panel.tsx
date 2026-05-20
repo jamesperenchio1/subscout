@@ -1,8 +1,16 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import type { ScanEvent } from "@/lib/scan/orchestrator";
+
+interface JobStatus {
+  id: string;
+  status: "pending" | "running" | "done" | "error";
+  latest_stage: string | null;
+  progress: { current: number; total: number; filtered: number } | null;
+  summary: { confirmed: number; possible: number; canceled: number; trial: number } | null;
+  error_message: string | null;
+}
 
 interface LogLine {
   ts: string;
@@ -10,77 +18,117 @@ interface LogLine {
   color: string;
 }
 
+function now() {
+  return new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
 export function FirstScanPanel() {
   const router = useRouter();
-  const [progress, setProgress] = useState({ current: 0, total: 0, filtered: 0 });
-  const [found, setFound] = useState(0);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [job, setJob] = useState<JobStatus | null>(null);
   const [logs, setLogs] = useState<LogLine[]>([]);
-  const [done, setDone] = useState(false);
-  const [error, setError] = useState(false);
-  const [attempt, setAttempt] = useState(1);
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
+  const lastStageRef = useRef<string>("");
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const doneRef = useRef(false);
 
-  function addLog(text: string, color = "text-zinc-300") {
-    const ts = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const addLog = useCallback((text: string, color = "text-zinc-300") => {
+    const ts = now();
     setLogs((prev) => [...prev, { ts, text, color }]);
     setTimeout(() => logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: "smooth" }), 30);
-  }
+  }, []);
 
+  const stopPolling = useCallback(() => {
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current);
+      pollingRef.current = null;
+    }
+  }, []);
+
+  const startScan = useCallback(async () => {
+    stopPolling();
+    doneRef.current = false;
+    setStarting(true);
+    setStartError(null);
+    setLogs([]);
+    setJob(null);
+    setJobId(null);
+    lastStageRef.current = "";
+
+    try {
+      const res = await fetch("/api/scan/start", { method: "POST" });
+      const data = await res.json() as { jobId?: string; error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Failed to start scan");
+      addLog("Scan queued…", "text-sky-300");
+      setJobId(data.jobId!);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setStartError(msg);
+      addLog(`Failed to start: ${msg}`, "text-red-400");
+      setStarting(false);
+    }
+  }, [addLog, stopPolling]);
+
+  // Start scan on mount
   useEffect(() => {
-    const es = new EventSource(`/api/scan/stream?attempt=${attempt}`);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    startScan();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-    es.onopen = () => {
-      addLog(`Scan connected (attempt ${attempt})`, "text-sky-300");
-      setError(false);
-    };
+  // Poll when we have a jobId
+  useEffect(() => {
+    if (!jobId) return;
 
-    es.onmessage = (e) => {
-      const event = JSON.parse(e.data) as ScanEvent;
-      switch (event.type) {
-        case "stage":
-          addLog(event.message, "text-zinc-400");
-          break;
-        case "progress":
-          setProgress((prev) => ({ current: event.current, total: event.total, filtered: event.filtered ?? prev.filtered }));
-          break;
-        case "found":
-          setFound((n) => n + 1);
-          addLog(
-            `✓ ${event.service} [${event.status}] · ${event.amount != null ? `${event.currency ?? ""}${event.amount}` : "no amount"} · ${event.cycle ?? "unknown"} · ${event.evidence}`,
-            "text-emerald-400",
-          );
-          break;
-        case "summary":
-          addLog(
-            `Detected: ${event.confirmed} confirmed · ${event.possible} possible · ${event.trial} trial · ${event.canceled} canceled`,
-            "text-emerald-300",
-          );
-          break;
-        case "error":
-          addLog(`Error: ${event.message}`, "text-red-400");
-          break;
-        case "done":
+    const poll = async () => {
+      if (doneRef.current) return;
+      try {
+        const res = await fetch(`/api/scan/status?jobId=${jobId}`);
+        if (!res.ok) return;
+        const data = await res.json() as JobStatus;
+        setJob(data);
+
+        if (data.latest_stage && data.latest_stage !== lastStageRef.current) {
+          lastStageRef.current = data.latest_stage;
+          addLog(data.latest_stage, "text-zinc-400");
+        }
+
+        if (data.status === "done" && !doneRef.current) {
           doneRef.current = true;
+          const s = data.summary;
+          if (s) {
+            addLog(
+              `Detected: ${s.confirmed} confirmed · ${s.possible} possible · ${s.trial} trial · ${s.canceled} canceled`,
+              "text-emerald-300",
+            );
+          }
           addLog("Done — refreshing dashboard", "text-emerald-300");
-          setDone(true);
-          es.close();
+          stopPolling();
+          setStarting(false);
           setTimeout(() => router.refresh(), 800);
-          break;
+        } else if (data.status === "error") {
+          addLog(`Error: ${data.error_message ?? "Unknown error"}`, "text-red-400");
+          stopPolling();
+          setStarting(false);
+        }
+      } catch {
+        // transient network error — keep polling
       }
     };
 
-    es.onerror = () => {
-      if (doneRef.current) return;
-      addLog(`Stream disconnected (attempt ${attempt}) — click Retry to resume`, "text-red-400");
-      setError(true);
-      es.close();
-    };
+    pollingRef.current = setInterval(poll, 2000);
+    poll();
 
-    return () => es.close();
-  }, [attempt, router]);
+    return () => stopPolling();
+  }, [jobId, addLog, stopPolling, router]);
 
+  const progress = job?.progress ?? { current: 0, total: 0, filtered: 0 };
   const pct = progress.total > 0 ? Math.round((progress.current / progress.total) * 100) : 0;
+  const done = job?.status === "done";
+  const hasError = job?.status === "error" || !!startError;
+  const found = job?.summary?.confirmed ?? 0;
 
   return (
     <div className="grid gap-6 lg:grid-cols-[360px_1fr]">
@@ -112,7 +160,7 @@ export function FirstScanPanel() {
           {[
             { label: "Processed", value: `${progress.current}${progress.total ? ` / ${progress.total}` : ""}` },
             { label: "Passed filter", value: String(progress.filtered) },
-            { label: "Found", value: String(found), highlight: true },
+            { label: "Found", value: done ? String(found) : "—", highlight: done && found > 0 },
           ].map(({ label, value, highlight }) => (
             <div key={label} className="rounded-2xl border border-stone-200 bg-white p-4">
               <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">{label}</p>
@@ -124,11 +172,11 @@ export function FirstScanPanel() {
         <div>
           <div className="mb-1.5 flex justify-between text-xs text-stone-500">
             <span>Progress</span>
-            <span>{done ? "Complete" : `${pct}%`}</span>
+            <span>{done ? "Complete" : starting ? `${pct}%` : "—"}</span>
           </div>
           <div className="h-2 w-full overflow-hidden rounded-full bg-stone-200">
             <div
-              className={`h-full rounded-full transition-all duration-300 ${done ? "bg-emerald-500" : "bg-stone-950"}`}
+              className={`h-full rounded-full transition-all duration-300 ${done ? "bg-emerald-500" : hasError ? "bg-red-500" : "bg-stone-950"}`}
               style={{ width: done ? "100%" : `${pct}%` }}
             />
           </div>
@@ -150,23 +198,14 @@ export function FirstScanPanel() {
           )}
         </div>
 
-        {error && (
+        {hasError && (
           <div className="flex items-center gap-3">
             <button
-              onClick={() => {
-                doneRef.current = false;
-                setDone(false);
-                setProgress({ current: 0, total: 0, filtered: 0 });
-                setFound(0);
-                setLogs([]);
-                setError(false);
-                setAttempt((n) => n + 1);
-              }}
+              onClick={() => startScan()}
               className="rounded-full border border-stone-300 bg-white px-4 py-2 text-sm font-semibold hover:bg-stone-50"
             >
               Retry scan
             </button>
-            <p className="text-xs text-stone-500">Attempt {attempt}</p>
           </div>
         )}
       </div>
