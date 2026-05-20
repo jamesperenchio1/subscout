@@ -2,10 +2,42 @@ import { google, type gmail_v1 } from "googleapis";
 import { decrypt } from "./crypto";
 import { THAI_BILLING_TERMS } from "./thailand";
 
-const BILLING_SUBJECT_QUERY =
-  `subject:(receipt OR invoice OR "payment successful" OR "payment failed" OR "payment due" OR "payment received" OR "you've been charged" OR charge OR renewal OR subscription OR "your plan" OR "order confirmation" OR ${THAI_BILLING_TERMS.map((term) => `"${term}"`).join(" OR ")})`;
-const BILLING_FROM_QUERY =
-  `from:(billing OR invoice OR noreply OR payments OR receipts OR no-reply OR support OR hello OR accounts OR orders OR notifications OR receipt OR chargebee OR stripe OR paypal OR truemoney OR line OR grab OR shopee OR lazada OR ais OR true OR dtac OR kbank OR scb OR krungthai) OR ${BILLING_SUBJECT_QUERY}`;
+// 4 unioned queries — each cast wide over a different signal, deduped downstream
+const BILLING_QUERIES = [
+  // Q1: receipt / payment / order keywords in subject
+  `subject:(receipt OR invoice OR "payment successful" OR "payment received" OR "payment processed" OR "payment confirmation" OR "you've been charged" OR "order confirmation" OR "billing statement" OR "amount due" OR "amount paid")`,
+  // Q2: renewal / subscription lifecycle keywords in subject
+  `subject:(renewal OR renew OR subscription OR subscribe OR "your plan" OR "auto-renew" OR "trial ending" OR "free trial" OR "next billing" OR "next charge" OR cancellation OR canceled OR cancelled)`,
+  // Q3: billing sender patterns (sender address prefixes that billing systems use)
+  `from:(billing OR invoice OR receipts OR payments OR noreply OR no-reply OR orders OR accounts OR notifications OR receipt OR stripe OR paypal OR chargebee OR paddle OR recurly)`,
+  // Q4: Thai / SEA billing terms
+  `subject:(${THAI_BILLING_TERMS.map((t) => `"${t}"`).join(" OR ")})`,
+];
+
+const MAX_PER_QUERY = 2000;
+
+async function fetchQueryIds(
+  gmail: gmail_v1.Gmail,
+  q: string,
+  after: number,
+): Promise<string[]> {
+  const ids: string[] = [];
+  let pageToken: string | undefined = undefined;
+  while (ids.length < MAX_PER_QUERY) {
+    const res = await gmail.users.messages.list({
+      userId: "me",
+      q: `${q} after:${after}`,
+      maxResults: Math.min(500, MAX_PER_QUERY - ids.length),
+      fields: "messages(id),nextPageToken",
+      pageToken,
+    });
+    const data = res.data as gmail_v1.Schema$ListMessagesResponse;
+    for (const m of data.messages ?? []) if (m.id) ids.push(m.id);
+    pageToken = data.nextPageToken ?? undefined;
+    if (!pageToken) break;
+  }
+  return ids;
+}
 
 export function gmailClient(encryptedRefreshToken: string): gmail_v1.Gmail {
   const oauth2 = new google.auth.OAuth2(
@@ -19,25 +51,23 @@ export function gmailClient(encryptedRefreshToken: string): gmail_v1.Gmail {
 export async function listBillingMessageIds(
   gmail: gmail_v1.Gmail,
   sinceDate: Date,
-  maxResults = 500,
+  maxResults = 5000,
 ): Promise<string[]> {
   const after = Math.floor(sinceDate.getTime() / 1000);
-  const q = `${BILLING_FROM_QUERY} after:${after}`;
+  const seen = new Set<string>();
   const ids: string[] = [];
-  let pageToken: string | undefined = undefined;
-  while (ids.length < maxResults) {
-    const res = await gmail.users.messages.list({
-      userId: "me",
-      q,
-      maxResults: Math.min(500, maxResults - ids.length),
-      fields: "messages(id),nextPageToken",
-      pageToken,
-    });
-    const data = res.data as gmail_v1.Schema$ListMessagesResponse;
-    for (const m of data.messages ?? []) if (m.id) ids.push(m.id);
-    pageToken = data.nextPageToken ?? undefined;
-    if (!pageToken) break;
+
+  for (const q of BILLING_QUERIES) {
+    const queryIds = await fetchQueryIds(gmail, q, after);
+    for (const id of queryIds) {
+      if (!seen.has(id) && ids.length < maxResults) {
+        seen.add(id);
+        ids.push(id);
+      }
+    }
+    if (ids.length >= maxResults) break;
   }
+
   return ids;
 }
 

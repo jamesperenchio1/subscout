@@ -39,7 +39,7 @@ export async function runScan(
   log({ type: "stage", stage: "gmail", message: "Searching Gmail for billing emails…" });
   console.log("[scan] stage 1: searching Gmail");
   let t = Date.now();
-  const ids = await listBillingMessageIds(gmail, since, 500);
+  const ids = await listBillingMessageIds(gmail, since, 5000);
   console.log(`[scan] stage 1 done: ${ids.length} ids (${elapsed(t)})`);
   log({ type: "stage", stage: "gmail", message: `Found ${ids.length} candidate emails (${elapsed(t)})` });
 
