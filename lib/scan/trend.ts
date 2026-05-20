@@ -80,6 +80,39 @@ function detectCycle(
   return detectCycleFromGaps(positiveDates);
 }
 
+function computeDetectionScore(
+  positives: EventRow[],
+  cycle: BillingCycle,
+  senderDomain: string | null,
+): number {
+  let score = 0;
+
+  // Event type weights
+  for (const ev of positives) {
+    if (ev.event_type === "renewal" || ev.event_type === "subscription_confirmed") score += 3;
+    else if (ev.event_type === "failed_payment") score += 2;
+    else if (ev.event_type === "charge") score += 1;
+  }
+
+  // Recurring cycle detected (not ambiguous)
+  if (cycle !== "unknown") score += 2;
+
+  // Known subscription domain in brand canon
+  const domainRecord = senderDomain ? lookupByDomain(senderDomain) : null;
+  if (domainRecord?.kind === "subscription") score += 2;
+
+  // Consistent charge amounts (strong recurring signal)
+  const positiveAmounts = positives
+    .map((e) => e.amount)
+    .filter((a): a is number => a != null && a > 0);
+  if (positiveAmounts.length >= 2) {
+    const uniqueCents = new Set(positiveAmounts.map((a) => Math.round(a * 100)));
+    if (uniqueCents.size === 1) score += 3;
+  }
+
+  return score;
+}
+
 interface DetectResult {
   confirmed: number;
   possible: number;
@@ -89,7 +122,9 @@ interface DetectResult {
 
 /**
  * Trend detection: group all positive email_events by (service_brand, payment_source).
- * Apply 2+ matching charges => confirmed; 1 => possible; 3 missed cycles => canceled.
+ * Score each group: charge+1, renewal/sub_confirmed+3, failed_payment+2,
+ * recurring_cycle+2, known_subscription_domain+2, consistent_amounts+3.
+ * score>=4→active/confirmed; score 2-3→possible; score<2→skip (unless trial/cancellation).
  * Upserts subscriptions and links subscription_evidence rows.
  */
 export async function detectSubscriptions(userId: string): Promise<DetectResult> {
@@ -202,21 +237,25 @@ export async function detectSubscriptions(userId: string): Promise<DetectResult>
     const currency =
       positives.find((e) => e.currency)?.currency ?? latest.currency ?? null;
 
-    // Compute status
+    // Compute detection score
+    const detectionScore = computeDetectionScore(positives, cycle, latest.sender_domain ?? null);
+
+    // Determine status using score-based thresholds
     let status: "active" | "possible" | "canceled" | "trial" | "payment_failed";
     let evidenceStrength: "confirmed" | "possible" | "manual";
 
-    if (cancellation && positives.length < 2) {
+    if (cancellation && detectionScore < 4) {
+      // Cancellation with insufficient evidence for active → canceled
       status = "canceled";
-      evidenceStrength = positives.length >= 1 ? "confirmed" : "possible";
+      evidenceStrength = detectionScore >= 2 ? "confirmed" : "possible";
     } else if (trial && positives.length === 0) {
+      // Trial-only, no charges yet
       status = "trial";
       evidenceStrength = "possible";
-    } else if (positives.length >= 2) {
-      // Check for missed cycles → canceled
-      const lastDate = Math.max(...positiveDates);
-      const now = Date.now();
-      const missedCycles = cycleDays ? (now - lastDate) / DAY_MS / cycleDays : 0;
+    } else if (detectionScore >= 4) {
+      // Strong evidence of an active subscription
+      const lastDate = positiveDates.length ? Math.max(...positiveDates) : 0;
+      const missedCycles = cycleDays ? (Date.now() - lastDate) / DAY_MS / cycleDays : 0;
       if (missedCycles >= 3) {
         status = "canceled";
       } else if (latest.event_type === "failed_payment") {
@@ -225,9 +264,13 @@ export async function detectSubscriptions(userId: string): Promise<DetectResult>
         status = "active";
       }
       evidenceStrength = "confirmed";
-    } else {
+    } else if (detectionScore >= 2) {
+      // Weak evidence — surface as possible
       status = "possible";
       evidenceStrength = "possible";
+    } else {
+      // score < 2 and no cancellation/trial context → not confident enough to show
+      continue;
     }
 
     // Brand enrichment (logo + category)
@@ -263,6 +306,7 @@ export async function detectSubscriptions(userId: string): Promise<DetectResult>
           evidence_strength: evidenceStrength,
           category: brandInfo.category,
           brand_logo_url: brandInfo.logo_url,
+          detection_score: detectionScore,
           updated_at: new Date().toISOString(),
         },
         { onConflict: "user_id,service_brand,payment_source" },
