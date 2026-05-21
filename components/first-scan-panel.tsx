@@ -10,6 +10,8 @@ interface JobStatus {
   progress: { current: number; total: number; filtered: number } | null;
   summary: { confirmed: number; possible: number; canceled: number; trial: number } | null;
   error_message: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
 interface LogLine {
@@ -33,6 +35,9 @@ export function FirstScanPanel() {
   const lastStageRef = useRef<string>("");
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const doneRef = useRef(false);
+  const lastStatusRef = useRef<JobStatus["status"] | null>(null);
+  const lastProgressRef = useRef<string>("");
+  const lastHeartbeatLogRef = useRef<number>(0);
 
   const addLog = useCallback((text: string, color = "text-zinc-300") => {
     const ts = now();
@@ -56,12 +61,16 @@ export function FirstScanPanel() {
     setJob(null);
     setJobId(null);
     lastStageRef.current = "";
+    lastStatusRef.current = null;
+    lastProgressRef.current = "";
+    lastHeartbeatLogRef.current = 0;
 
     try {
       const res = await fetch("/api/scan/start", { method: "POST" });
       const data = await res.json() as { jobId?: string; error?: string };
       if (!res.ok) throw new Error(data.error ?? "Failed to start scan");
       addLog("Scan queued…", "text-sky-300");
+      addLog(`Job id: ${data.jobId ?? "unknown"}`, "text-zinc-500");
       setJobId(data.jobId!);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -86,13 +95,42 @@ export function FirstScanPanel() {
       if (doneRef.current) return;
       try {
         const res = await fetch(`/api/scan/status?jobId=${jobId}`);
-        if (!res.ok) return;
+        if (!res.ok) {
+          addLog(`Status poll failed (${res.status})`, "text-amber-400");
+          return;
+        }
         const data = await res.json() as JobStatus;
         setJob(data);
+
+        if (data.status !== lastStatusRef.current) {
+          lastStatusRef.current = data.status;
+          addLog(`Status -> ${data.status}`, data.status === "error" ? "text-red-400" : "text-sky-300");
+        }
 
         if (data.latest_stage && data.latest_stage !== lastStageRef.current) {
           lastStageRef.current = data.latest_stage;
           addLog(data.latest_stage, "text-zinc-400");
+        }
+
+        const progressKey = JSON.stringify(data.progress ?? {});
+        if (progressKey !== lastProgressRef.current && data.progress) {
+          lastProgressRef.current = progressKey;
+          addLog(
+            `Progress ${data.progress.current}/${data.progress.total} (filtered ${data.progress.filtered})`,
+            "text-zinc-500",
+          );
+        }
+
+        const updatedMs = data.updated_at ? new Date(data.updated_at).getTime() : Date.now();
+        const staleSeconds = Math.max(0, Math.floor((Date.now() - updatedMs) / 1000));
+        const shouldLogHeartbeat = staleSeconds >= 10 && staleSeconds - lastHeartbeatLogRef.current >= 15;
+        if (shouldLogHeartbeat) {
+          lastHeartbeatLogRef.current = staleSeconds;
+          if (data.status === "pending") {
+            addLog(`Still queued (${staleSeconds}s since last update). Worker may be offline.`, "text-amber-300");
+          } else if (data.status === "running") {
+            addLog(`Still running (${staleSeconds}s since last update). Waiting for next stage…`, "text-amber-300");
+          }
         }
 
         if (data.status === "done" && !doneRef.current) {
@@ -114,7 +152,7 @@ export function FirstScanPanel() {
           setStarting(false);
         }
       } catch {
-        // transient network error — keep polling
+        addLog("Status poll network error — retrying…", "text-amber-400");
       }
     };
 

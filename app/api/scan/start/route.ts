@@ -18,6 +18,7 @@ export async function POST() {
     .insert({
       user_id: userId,
       status: "pending",
+      latest_stage: "Queued. Waiting for scan worker pickup…",
       progress: { current: 0, total: 0, filtered: 0 },
     })
     .select("id")

@@ -37,7 +37,7 @@ export const scanFunction = inngest.createFunction(
           jobProgress.current = scanEvent.current;
           jobProgress.total = scanEvent.total;
           if (scanEvent.filtered !== undefined) jobProgress.filtered = scanEvent.filtered;
-          if (progressCount % 50 === 0) {
+          if (progressCount % 10 === 0) {
             fireUpdate({ progress: { ...jobProgress } });
           }
           break;
@@ -53,7 +53,7 @@ export const scanFunction = inngest.createFunction(
     };
 
     try {
-      await updateJob({ status: "running" });
+      await updateJob({ status: "running", latest_stage: "Worker picked up job. Preparing Gmail accounts…" });
 
       let { data: accounts } = await db
         .from("gmail_accounts")
@@ -137,6 +137,7 @@ export const scanFunction = inngest.createFunction(
 
       await updateJob({
         status: "done",
+        latest_stage: "Scan completed successfully",
         progress: { ...jobProgress },
         summary: jobSummary,
       });
