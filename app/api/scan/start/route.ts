@@ -27,14 +27,27 @@ export async function POST() {
     return Response.json({ error: "Failed to create scan job" }, { status: 500 });
   }
 
-  await inngest.send({
-    name: "scan/run",
-    data: {
-      userId,
-      jobId: job.id,
-      userEmail: session.user?.email ?? "",
-    },
-  });
+  void inngest
+    .send({
+      name: "scan/run",
+      data: {
+        userId,
+        jobId: job.id,
+        userEmail: session.user?.email ?? "",
+      },
+    })
+    .catch(async (err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      await db
+        .from("scan_jobs")
+        .update({
+          status: "error",
+          latest_stage: "Failed to queue scan",
+          error_message: message.slice(0, 500),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", job.id);
+    });
 
   return Response.json({ jobId: job.id });
 }
