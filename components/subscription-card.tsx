@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { formatMoney, daysUntil } from "@/lib/format";
 import { EditSubscriptionModal } from "./subscription-edit-modal";
+import { FeedbackModal } from "./subscription-feedback-modal";
 
 interface Sub {
   id: string;
@@ -67,6 +68,7 @@ export function SubscriptionCard({ sub }: { sub: Sub }) {
   const [sourceEmails, setSourceEmails] = useState<string[]>([]);
   const [loadingEvidence, setLoadingEvidence] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
 
   async function toggleEvidence() {
     if (showEvidence) { setShowEvidence(false); return; }
@@ -86,6 +88,9 @@ export function SubscriptionCard({ sub }: { sub: Sub }) {
     <>
     {showEdit && (
       <EditSubscriptionModal sub={sub} onClose={() => setShowEdit(false)} />
+    )}
+    {showFeedback && (
+      <FeedbackModal sub={sub} onClose={() => setShowFeedback(false)} />
     )}
     <article className={`flex flex-col rounded-2xl border bg-white p-5 ${isFailed ? "border-red-300" : isTrial ? "border-amber-300" : "border-stone-200"}`}>
       {isFailed && (
@@ -120,6 +125,17 @@ export function SubscriptionCard({ sub }: { sub: Sub }) {
           <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${CATEGORY_COLORS[cat] ?? CATEGORY_COLORS.other}`}>
             {cat}
           </span>
+          <button
+            onClick={() => setShowFeedback(true)}
+            title="Report issue"
+            className="rounded-full p-1 text-stone-400 hover:bg-stone-100 hover:text-stone-700"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+              <line x1="12" y1="9" x2="12" y2="13"/>
+              <line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+          </button>
           <button
             onClick={() => setShowEdit(true)}
             title="Edit subscription"

@@ -2,15 +2,33 @@ import { google, type gmail_v1 } from "googleapis";
 import { decrypt } from "./crypto";
 import { THAI_BILLING_TERMS } from "./thailand";
 
-// 4 unioned queries — each cast wide over a different signal, deduped downstream
+// 12 specialized queries — each targets a distinct billing/subscription signal.
+// We run every query against Gmail and deduplicate message IDs downstream,
+// so overlap across categories is harmless and ensures wide coverage.
 const BILLING_QUERIES = [
-  // Q1: receipt / payment / order keywords in subject
+  // Q1: core receipt / payment / order keywords in subject
   `subject:(receipt OR invoice OR "payment successful" OR "payment received" OR "payment processed" OR "payment confirmation" OR "you've been charged" OR "order confirmation" OR "billing statement" OR "amount due" OR "amount paid")`,
   // Q2: renewal / subscription lifecycle keywords in subject
   `subject:(renewal OR renew OR subscription OR subscribe OR "your plan" OR "auto-renew" OR "trial ending" OR "free trial" OR "next billing" OR "next charge" OR cancellation OR canceled OR cancelled)`,
-  // Q3: billing sender patterns (sender address prefixes that billing systems use)
-  `from:(billing OR invoice OR receipts OR payments OR noreply OR no-reply OR orders OR accounts OR notifications OR receipt OR stripe OR paypal OR chargebee OR paddle OR recurly)`,
-  // Q4: Thai / SEA billing terms
+  // Q3: billing-specific sender address patterns
+  `from:(billing OR invoice OR receipts OR payments OR receipt OR stripe OR paypal OR chargebee OR paddle OR recurly OR fastspring OR gumroad OR woocommerce)`,
+  // Q4: App store receipts
+  `from:(apple.com OR google.com OR play.google.com) subject:(receipt OR invoice OR subscription OR "your receipt" OR "payment receipt" OR "you paid" OR charged OR billing)`,
+  // Q5: PayPal specifically
+  `from:(paypal.com OR pay pal) subject:(receipt OR payment OR invoice OR "you sent" OR "money sent" OR "subscription payment")`,
+  // Q6: Stripe receipts
+  `from:(stripe.com OR "via stripe") subject:(receipt OR "your receipt" OR invoice)`,
+  // Q7: Trial-related
+  `subject:("free trial" OR "trial started" OR "trial ending" OR "trial ends" OR "trial period" OR "trial reminder" OR "confirm your trial" OR "start your free trial")`,
+  // Q8: Cancellation / refund
+  `subject:(cancellation OR canceled OR cancelled OR "subscription canceled" OR "membership canceled" OR refund OR "subscription ended" OR "plan ended")`,
+  // Q9: Price increase / plan change
+  `subject:("price increase" OR "price change" OR "plan change" OR "subscription change" OR "update to your plan" OR "new pricing" OR "billing update")`,
+  // Q10: Domain-based catch-all for known processors
+  `from:(chargebee.com OR paddle.com OR recurly.com OR fastspring.com OR 2checkout.com OR braintree.com OR adyen.com OR klarna.com OR mollie.com OR gocardless.com OR razorpay.com OR xendit.com)`,
+  // Q11: Generic amount + currency signals
+  `subject:($ OR € OR £ OR ¥ OR USD OR EUR OR GBP) (subscription OR monthly OR annual OR billed OR charged)`,
+  // Q12: Thai / SEA billing terms
   `subject:(${THAI_BILLING_TERMS.map((t) => `"${t}"`).join(" OR ")})`,
 ];
 
